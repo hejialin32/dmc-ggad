@@ -1,0 +1,1255 @@
+﻿﻿﻿﻿    \documentclass[conference, onecolumn]{IEEEtran}
+    \IEEEoverridecommandlockouts
+
+    % ================= 中文支持 =================
+    \usepackage{ctex}
+    % ================= 常用宏包 =================
+    \usepackage{cite}
+    \usepackage{amsmath,amssymb,amsfonts}
+    \usepackage{graphicx}
+    \usepackage{xcolor}
+    \usepackage{booktabs}
+    \usepackage{multirow}
+    \usepackage{caption}
+    \usepackage{subcaption}
+    \usepackage{algorithm}
+    \usepackage{algorithmic}
+    \usepackage{longtable}
+    \usepackage{wrapfig}
+    \usepackage{url}
+    \usepackage{placeins}
+
+    \def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+    \begin{document}
+
+% 统一章节编号为罗马数字（IEEEtran conference 规范）
+\renewcommand{\thesection}{\Roman{section}}
+
+    % ================= 标题 =================
+    \title{DMC-GGAD：基于密度感知与微环境伪装的半监督图异常检测\\
+    DMC-GGAD: Density-Aware and Micro-Environment Camouflage for Semi-Supervised Graph Anomaly Detection\\
+    }
+    \author{
+    \IEEEauthorblockN{xx}
+    \IEEEauthorblockA{
+    西华师范大学 计算机学院\\
+    四川 南充\\
+    邮箱:@.com}
+    }
+
+    \maketitle
+
+    % ================= 摘要 =================
+    \begin{abstract}
+    图异常检测在金融欺诈识别和网络安全监测等领域具有重要价值。半监督生成式方法利用少量已知正常节点合成伪异常，从而为判别器提供可学习的负样本。然而，现有 GGAD 风格方法通常隐含拓扑均匀假设，即默认不同区域共享同一种异常生成规则。这会使稠密社区中的伪异常过度偏离局部流形，使稀疏区域中的伪异常过于显著，最终造成伪异常分布失真并降低异常真实性。本文围绕伪异常质量提出 DMC-GGAD。该框架通过密度感知伪异常合成、微环境伪装校准和拓扑自适应分数融合，逐步约束伪异常的局部一致性、分布覆盖性和最终排序可靠性。推理阶段的 TAF-QA 仅依据训练集中已知正常节点上的无监督分数质量校准神经判别分数与图先验分数，不使用验证集或测试标签。实验结果表明，DMC-GGAD 在 10 个真实世界数据集上取得了稳定且具有竞争力的 AUROC 和 AP 表现。
+    \end{abstract}
+
+    \begin{IEEEkeywords}
+    图异常检测，半监督学习，伪异常合成，拓扑自适应，微环境伪装，分数融合
+    \end{IEEEkeywords}
+
+    % ================= 引言 =================
+    \section{引言}
+    图异常检测在金融欺诈识别、网络安全监测以及谣言溯源等领域具有广泛应用。传统图异常检测方法多依赖无监督重构、对比学习或单类分类目标，通过刻画节点属性和局部结构的偏离来定位异常 \cite{ref_ma2021, ref_tang2023}。然而在许多真实场景中，异常标签稀缺且具有隐蔽性，而获取一组高置信度正常节点往往更可行。半监督生成式图异常检测因此成为一种重要范式：模型以已知正常节点为锚点合成伪异常，并利用这些伪异常构造判别边界。
+
+    生成式范式的关键不在于负样本数量，而在于伪异常质量。伪异常若远离真实图流形，判别器会学习到过于简单的离群模式；伪异常若与正常节点过度重合，判别边界又会变得模糊。因此，有效的伪异常需要同时保持局部拓扑一致性、属性分布合理性和足够的判别张力。现有 GGAD 风格方法虽然证明了半监督生成式学习的潜力，但往往采用统一的异常生成规则，隐含不同拓扑区域具有相同异常真实性要求的假设。本文将其称为拓扑均匀假设。
+
+    拓扑均匀假设会直接破坏伪异常真实性。高密度区域通常具有更强的局部流形连续性：节点受到稳定邻域语义约束，异常若被生成得过于离群，反而成为容易识别的人工负样本。低密度区域则缺乏可靠上下文，统一邻域聚合或固定接近度重构容易产生分布单一且过度显著的异常。与此同时，真实异常并不总是孤立离群点；许多异常会嵌入高同质性微环境中以模拟正常行为。由此，拓扑不敏感生成会造成伪异常分布失真（pseudo anomaly distribution mismatch），使合成异常偏离真实异常的拓扑依赖特征。
+
+    本文围绕伪异常质量提出 DMC-GGAD。该框架以拓扑自适应伪异常合成为主线：密度感知生成用于匹配不同局部结构下的异常真实性，微环境伪装校准用于约束伪异常与正常锚点之间的合理距离，TAF-QA 则在推理阶段根据无监督分数质量校准神经判别分数与训练集图先验分数。三者服务于同一目标，即减少拓扑不敏感生成造成的伪异常分布失真。
+
+    本文的主要贡献总结如下：
+    \begin{enumerate}
+        \item 问题层面：本文指出现有生成式图异常检测方法普遍受到拓扑不敏感伪异常生成的限制。该限制源于拓扑均匀假设，会导致合成异常与真实异常之间的分布不一致，尤其影响稠密社区、稀疏区域和伪装异常场景下的判别边界质量。
+        \item 方法层面：本文提出面向伪异常质量的 DMC-GGAD 框架，通过拓扑自适应密度生成刻画不同局部结构下的异常真实性，并通过微环境伪装校准约束伪异常与正常锚点之间的合理距离。其中，REC 约束作为支持机制，根据局部同质性执行靠近或排斥操作。
+        \item 推理层面：本文提出无监督质量评估驱动的 TAF-QA 融合机制，在推理阶段校准神经判别分数与训练集可见图先验分数。该过程不使用数据集名称查表、离线回归目标、验证集标签或测试集标签，保持了半监督异常检测协议下的信息隔离。
+        \item 实验层面：在多个真实世界图异常检测数据集上的结果验证了 DMC-GGAD 的有效性。主实验、消融实验、敏感性分析、MMD 诊断和鲁棒性实验共同表明，拓扑自适应伪异常合成能够在多种图结构下产生稳定收益，同时其效果仍受到具体拓扑与属性分布的影响。
+    \end{enumerate}
+
+    % ================= 相关工作 =================
+    \section{相关工作}
+    \subsection{图异常检测}
+    现有的图异常检测（GAD）方法主要分为无监督和半监督两类 \cite{ref_akoglu2015, ref_ma2021}。
+
+    \subsubsection{无监督重构与对比学习}
+    早期无监督方法主要依赖图自编码器，通过重构拓扑结构或属性特征的误差来识别异常节点，代表性工作包括 DOMINANT~\cite{ref_dominant}、AnomalyDAE~\cite{ref_anomalydae} 和 GAD-NR~\cite{ref_yang2023}。这类方法的优势在于无需异常标签，但重构目标往往会同时拟合正常模式和异常噪声；当异常节点嵌入局部正常社区时，重构误差并不一定能稳定放大其异常性。基于图对比学习的方法进一步通过视图一致性学习鲁棒表示，例如 CoLA~\cite{ref_cola2022}、ConsisGAD~\cite{ref_consisgad2024} 以及其他对比式 GAD 方法~\cite{ref_liu2021, ref_duan2023}。它们与本文相同之处在于都试图改善节点表示的可分性，但主要依赖数据增强、负样本构造或多视图一致性约束，并不显式生成面向判别边界的伪异常样本。
+
+    \subsubsection{单类、结构同质性与半监督方法}
+    单类分类方法将少量正常先验转化为紧凑边界约束。OCGNN~\cite{ref_ocgnn} 将超球面分类引入图域，Inductive Anomaly Detection~\cite{ref6} 关注属性网络中的归纳式异常识别，TAM~\cite{ref4} 则通过截断亲和力建模正常节点同质性。另一些结构建模方法，如 BWGNN~\cite{ref_bwgnn2022} 和 RHO~\cite{ref_rho2023}，分别从图小波和高阶结构优化角度刻画异常相关的结构信号。这些方法强调正常模式压缩、同质性建模或高阶结构正则化，与 DMC-GGAD 的区别在于：它们通常不把伪异常质量作为核心对象，也不讨论生成样本如何随局部拓扑密度调整真实性。
+
+    \subsubsection{生成式图异常检测}
+    生成式方法通过构造负样本来缓解真实异常标签稀缺问题。GAAN~\cite{ref_gaan} 使用生成器与判别器建模属性网络中的异常分布，AEGIS~\cite{ref_aegis} 结合自编码器和生成式对抗模仿学习以提升异常敏感表示，GGAD~\cite{ref7} 则进一步将少量已知正常节点引入半监督生成式图异常检测框架，通过合成伪异常构造显式决策边界。DMC-GGAD 与这些方法共享“用生成样本支持判别学习”的基本思想，但关注点有所不同：GAAN 和 AEGIS 更强调对抗生成或表示学习，GGAD 证明了半监督伪异常生成的有效性，而本文进一步追问伪异常是否与当前图的局部拓扑环境一致。换言之，DMC-GGAD 将问题从“是否生成伪异常”推进到“如何生成拓扑一致、局部分布合理且具有判别价值的伪异常”。
+
+    \subsubsection{研究缺口}
+    上述方法分别从重构误差、对比一致性、单类边界、结构同质性和生成式负样本等角度推进了图异常检测研究，但多数方法没有显式回答一个关键问题：伪异常应当如何随局部拓扑环境改变其真实性和伪装强度。真实异常并不总是孤立离群点；高隐蔽性异常节点可能嵌入高密度正常社区，从而在局部结构上呈现伪装行为~\cite{ref_luo2022, ref_yuan2023}。因此，拓扑不敏感的生成规则容易把不同区域的异常都压成同一种负样本模式，造成伪异常分布失真。DMC-GGAD 正是针对这一缺口展开：它将密度感知生成、微环境伪装约束和质量感知融合统一到伪异常质量这一主线下，以减少合成异常与真实图分布之间的错配。
+
+    % ================= 预备知识 =================
+    \section{预备知识}
+    \subsection{符号定义}
+    令 $\mathcal{G} = (\mathcal{V}, \mathcal{E}, \mathbf{X})$ 表示一个属性图，其中 $\mathcal{V} = \{v_1, \dots, v_n\}$ 是包含 $n$ 个节点的集合，$\mathcal{E} \subseteq \mathcal{V} \times \mathcal{V}$ 是边集。$\mathbf{X} \in \mathbb{R}^{n \times d}$ 是节点属性矩阵，其中 $\mathbf{x}_i \in \mathbb{R}^d$ 代表节点 $v_i$ 的原始特征向量。图的结构由邻接矩阵 $\mathbf{A} \in \{0, 1\}^{n \times n}$ 表示。在半监督场景下，我们已知一小部分正常节点标签 $\mathcal{V}_l \subset \mathcal{V}$，而其余节点 $\mathcal{V}_u$ 的标签在训练期间是不可见的。
+
+    \subsection{图神经网络表示学习}
+    为了捕捉节点的高阶拓扑和属性特征，我们采用多层图卷积网络（GCN）作为编码器，这是 GNN 的一种经典实现。第 $l$ 层的节点表示 $\mathbf{H}^{(l)}$ 更新公式如下：
+    \begin{equation}
+    \mathbf{H}^{(l)} = \text{GNN}(\mathbf{A}, \mathbf{H}^{(l-1)}; \mathbf{W}^{(l)})
+    \end{equation}
+    其中 $\mathbf{W}^{(l)}$ 是可学习的权重矩阵。最终，我们获得节点在嵌入空间中的紧凑表示 $\mathbf{h}_i \in \mathbb{R}^k$。
+
+    \begin{table}[htbp]
+    \centering
+    \caption{主要符号说明}
+    \label{tab:notation}
+    \resizebox{0.95\textwidth}{!}{%
+    \begin{tabular}{clp{7.5cm}}
+    \toprule
+    \textbf{符号} & \textbf{定义} & \textbf{说明} \\
+    \midrule
+    $\mathcal{G}=(\mathcal{V},\mathcal{E},\mathbf{X})$ & 属性图 & 节点集 $\mathcal{V}$、边集 $\mathcal{E}$、特征矩阵 $\mathbf{X}$ \\
+    $\mathcal{V}_l, \mathcal{V}_u, \mathcal{V}_{test}$ & 节点划分 & 已标注正常节点 / 未标注节点 / 测试节点 \\
+    $\mathcal{V}_p$ & 伪异常集合 & 由生成器合成的伪异常节点 \\
+    $\rho_i$ & 局部结构密度 & $\rho_i = |\mathcal{N}(v_i)|/(\mu_d + \epsilon)$ \\
+    $\Delta_i$ & 特征距离 & $\Delta_i = \|\mathbf{h}^{(gen)}_i - \mathbf{h}_i\|_2$ \\
+    $H(v_i)$ & 局部同质性 & 纯净子图内边的余弦相似度均值 $\in [0,1]$ \\
+    $r_i$ & 微环境伪装权重 & $r_i = \tanh(-1.0 \cdot (H(v_i)-\mu_H)/\sigma_H) \in [-1,1]$，用于控制伪异常的靠近或排斥强度 \\
+    $\mathcal{E}_{pure}(v_i)$ & 纯净子图边集 & 仅含两端均属于 $\mathcal{V}_l$ 的 $K$-跳邻域内边 \\
+    $\gamma$ & 门控值 & 特征维度感知门控输出 $\in (0,1)$ \\
+    $\omega_i$ & 融合权重 & $\omega_i = (1-\gamma)\omega_{global} + \gamma\omega_{local}$ \\
+    $\alpha$ & 拓扑自适应融合权重 & TAF-QA 在线调配神经判别分数与图结构/属性先验分数的贡献占比 \\
+    $s_i$ & 局部亲和力 & 节点与邻域的平均余弦相似度 \\
+    $m$ & 边际常数 (Margin) & 亲和力边际损失的超参数 \\
+    $\lambda_1, \lambda_2, \lambda_{scale}$ & 损失权重 & 分别对应 $\mathcal{L}_{margin}, \mathcal{L}_{bce}, \mathcal{L}_{rec}$ \\
+    $\tau$ & 密度阈值 & 区分高/低密度分支的阈值 \\
+    $\alpha_{i,j}$ & 注意力权重 & $\text{Sigmoid}(\text{MLP}([\mathbf{h}_i||\mathbf{h}_j||\mathbf{z}]))$ \\
+    $\mathbf{z}$ & 高斯噪声向量 & $\mathbf{z} \sim \mathcal{N}(0, \mathbf{I})$，注入注意力网络以刻画生成多样性 \\
+    $\mathcal{C}_i$ & 候选池 & $\text{Sample}_k(\mathcal{N}^2(v_i)) \cup \text{Sample}_q(\mathcal{V})$ \\
+    $s_v$ & 异常分数 & 推理阶段经 TAF-QA 融合后的最终排序分数 \\
+    \bottomrule
+    \end{tabular}%
+    }
+    \end{table}
+
+    % ================= 方法论 =================
+    \section{方法论}
+    \subsection{问题分析与总体框架}
+    DMC-GGAD 围绕伪异常质量建模。现有生成式方法往往把不同拓扑区域视作同一种分布环境，因而难以同时满足稠密社区的流形连续性、稀疏区域的覆盖广度以及伪装异常的局部一致性。DMC-GGAD 采用两阶段解耦架构，将微环境先验的校准与密度感知的异常生成在时序和特征空间上分离，以分别约束伪异常的拓扑形态和锚点距离。
+
+    \begin{enumerate}
+        \item 阶段一：静态微环境先验校准（预计算，零成本）。在训练启动前，基于原始输入特征 $\mathbf{X}$ 和稀疏拓扑 $\mathbf{A}$，为每个已标注正常锚点 $v_i \in \mathcal{V}_l$ 预计算其专属的微环境伪装权重（REC 权重）。具体流程为：(a) 提取锚点的纯净邻域子图（仅保留两端均为正常节点的边）；(b) 利用原始特征的余弦相似度计算局部同质性 $H(v_i)$；(c) 经 Z-Score 标准化与 Tanh 映射得到局部 REC 信号，同时基于特征维度与全局平均同质性计算置信度门控 $\gamma$，将局部信号与全局基调融合为最终权重 $r_i \in [-1, 1]$；(d) 将所有锚点的 REC 权重存入查表字典，训练期间以 $O(1)$ 时间复杂度直接读取。该阶段仅需执行一次，不参与梯度计算，因此计算开销可忽略不计。
+        \item 阶段二：密度感知生成与对抗训练（端到端）。在训练循环中，多层 GCN 编码器将原始特征 $\mathbf{X}$ 提炼为高阶嵌入 $\mathbf{H}$。密度感知结构生成器根据每个锚点的局部拓扑密度 $\rho_i$ 自适应选择聚合策略：高密度区域采用特征驱动注意力聚合（含高斯噪声注入以刻画多样性），低密度区域采用随机潜特征混合。生成的伪异常嵌入 $\mathbf{H}^{(gen)}$ 与阶段一预计算的静态 REC 权重 $r_i$ 共同参与推拉重构损失 $\mathcal{L}_{rec}$ 的计算，通过反向传播端到端地更新 GCN 编码器与判别器的全部参数。
+    \end{enumerate}
+
+    上述解耦设计的核心动机在于：局部同质性 $H(v_i)$ 本质上是原始特征空间中的一阶结构统计量，其计算不依赖于可学习的嵌入表示。将其从训练循环中剥离，既避免了每个 epoch 重复计算子图同质性的高昂开销，又使得 REC 权重作为稳定的先验信号引导生成器的优化方向，而非与生成器嵌入同步震荡导致训练不稳定。这种"静态先验 + 动态生成"的协作范式，也使 DMC-GGAD 能够在较大规模图上保持可控的训练开销。
+
+    \begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.9\textwidth]{aijiagoutu.png}
+    \caption{DMC-GGAD 的两阶段解耦架构。阶段一（预计算）：基于原始特征 $\mathbf{X}$ 与稀疏拓扑 $\mathbf{A}$ 为每个锚点预计算静态 REC 权重 $r_i$，存入查表字典；阶段二（端到端训练）：GCN 编码器提取高阶嵌入 $\mathbf{H}$，密度感知生成器根据拓扑密度自适应选择注意力聚合（高密度）或随机潜特征混合（低密度）合成伪异常嵌入，与预计算的 REC 权重共同驱动推拉重构损失 $\mathcal{L}_{rec}$，联合 $\mathcal{L}_{bce}$ 与 $\mathcal{L}_{margin}$ 通过反向传播更新全部参数。}
+    \label{fig:architecture}
+    \end{figure}
+
+    \subsection{密度感知伪异常合成}
+    局部密度决定了伪异常需要遵循的拓扑真实性约束。对于锚点 $v_i \in \mathcal{V}_l$，其局部结构密度 $\rho_i$ 定义为：
+    \begin{equation}
+    \rho_i = \frac{|\mathcal{N}(v_i)|}{\mu_d + \epsilon},
+    \end{equation}
+    其中 $\mathcal{N}(v_i)$ 为节点 $v_i$ 的邻居集合，$\mu_d$ 为全图平均度，$\epsilon$ 为防止分母为零的极小值。根据预设阈值 $\tau$，生成器在高密度和低密度区域采用不同的合成路径：
+
+    \subsubsection{高密度分支：特征驱动的注意力聚合}
+    在高密度区域（$\rho_i > \tau$），异常往往呈现结构同谋特征。我们构建增强候选池 $\mathcal{C}_i = \text{Sample}_k(\mathcal{N}^2(v_i)) \cup \text{Sample}_q(\mathcal{V})$，其中 $\mathcal{N}^2(v_i)$ 为 $v_i$ 的 2 跳邻域。具体地，我们从 2 跳邻域中均匀无回放采样 $k=64$ 个节点作为结构候选，从全图节点集 $\mathcal{V}$ 中均匀无回放采样 $q=32$ 个节点作为全局随机候选（实验默认值），从而将候选池大小严格限制在 $k+q=96$，保证复杂度的线性可扩展性。利用注意力网络计算权重 $\alpha_{i,j}$：
+    \begin{equation}
+    \alpha_{i,j} = \sigma(\text{MLP}([\mathbf{h}_i || \mathbf{h}_j || \mathbf{z}])), \quad \mathbf{z} \sim \mathcal{N}(0, \mathbf{I}),
+    \end{equation}
+    其中 $\mathbf{z} \in \mathbb{R}^{d}$ 为从标准正态分布中采样的高斯噪声向量，与锚点嵌入 $\mathbf{h}_i$ 和候选嵌入 $\mathbf{h}_j$ 拼接后共同输入注意力网络。高密度区域的异常节点通常呈现多样化的结构同谋模式，若注意力计算仅依赖确定性嵌入，生成器容易陷入模式坍缩（Mode Collapse），反复合成高度相似的伪异常样本。高斯噪声使注意力网络在每次前向传播中面对不同扰动，从而刻画更丰富的局部异常形态。最终生成的异常嵌入为 $\mathbf{h}^{(gen)}_i = \sum_{j \in \mathcal{C}_i} \alpha_{i,j} \mathbf{h}_j$。此处采用 Sigmoid（而非 Softmax）激活函数，允许注意力权重之和 $\sum_j \alpha_{i,j}$ 大于 1，从而实现特征驱动的叠加效果。为防止嵌入范数随候选池大小失控增长，我们在生成器输出层施加 $\ell_2$ 范数约束 $\|\mathbf{h}^{(gen)}_i\|_2 \le R_{max}$，确保生成特征保持在可学习流形附近。
+
+    \subsubsection{低密度分支：随机潜特征混合}
+    在稀疏区域（$\rho_i \le \tau$），节点缺乏足够的结构上下文来支撑有意义的注意力聚合。因此，模型采用随机潜特征混合策略：从候选池 $\mathcal{C}_i$ 中为每个候选节点 $j$ 独立生成随机权重 $w_j \sim \text{Uniform}(0,1)$，经 Softmax 归一化后得到凸组合系数 $\tilde{w}_j = \text{softmax}(w)_j$，最终通过加权求和合成异常嵌入：
+    \begin{equation}
+    \mathbf{h}^{(gen)}_i = \sum_{j \in \mathcal{C}_i} \tilde{w}_j \cdot \mathbf{h}_j.
+    \end{equation}
+    该策略的直觉在于：低密度区域的异常节点通常表现为缺乏固定连接逻辑的游离型异常，其行为模式不遵循任何可学习的结构规律。通过随机凸组合对候选节点的嵌入进行特征插值，模型能够在潜空间中生成多样化的伪异常样本，覆盖游离型异常可能出现的广泛特征分布，从而避免对稀疏结构信号的过拟合。
+
+    \subsection{微环境伪装校准}
+    微环境同质性刻画伪异常与正常锚点之间应保持的距离关系。对于高度同质区域，伪异常若与正常锚点过度接近，会失去判别价值；对于异质区域，适度靠近正常流形则有助于模拟伪装行为。基于此，本文引入反距离排斥项来处理负权重节点。
+
+    对于生成的伪异常 $\tilde{z}_i$ 与锚点 $z_i$，其伪装损失 $\mathcal{L}_{rec}$ 定义为：
+    \begin{equation}
+    \mathcal{L}_{rec} = \frac{1}{|\mathcal{V}_p|} \sum_{i \in \mathcal{V}_p} \begin{cases}
+    \frac{|r_i|}{\Delta_i + \epsilon}, & \text{if } r_i < 0 \text{ (Repulsion)} \\
+    r_i \cdot \Delta_i, & \text{if } r_i \ge 0 \text{ (Camouflage)}
+    \end{cases},
+    \end{equation}
+    其中 $\mathcal{V}_p$ 表示生成的伪异常节点集合，$|\mathcal{V}_p|$ 为其规模。$r_i$ 为由局部同质性 $H_i$ 映射得到的节点级权重，$\Delta_i = \|\mathbf{h}^{(gen)}_i - \mathbf{h}_i\|_2$ 为特征距离，$\epsilon$ 为防除零项。
+
+    该设计在训练中提供如下作用：
+    \begin{enumerate}
+        \item 在高同质性区域（$r_i < 0$），模型对过度接近正常锚点的伪异常施加更强的排斥信号；
+        \item 当生成特征与锚点特征距离接近零时，排斥项能够缓解伪异常样本与正常样本重合的问题；
+        \item 平滑项 $\epsilon$ 用于避免距离为零时的数值奇异；需要指出的是，梯度大小仍与 $\epsilon$ 的取值相关，因此本文将其作为稳定训练的数值平滑项，而非严格的梯度有界性保证；
+        \item 随着特征距离的拉开，排斥项逐渐衰减，减少对生成嵌入的过度推离；
+        \item 结合上述 $\ell_2$ 范数约束，伪异常特征被限制在可学习的嵌入范围内，避免退化为无意义的离群噪声。
+    \end{enumerate}
+
+    局部同质性由已知正常节点集 $\mathcal{V}_l$ 中锚点 $v_i \in \mathcal{V}_l$ 的 $K$ 阶纯净邻域子图计算。具体而言，$\mathcal{E}_{pure}(v_i)$ 定义为：
+    \begin{equation}
+    \mathcal{E}_{pure}(v_i) = \{(u, v) : u, v \in \mathcal{N}^K(v_i) \cap \mathcal{V}_l, (u,v) \in \mathcal{E}\},
+    \end{equation}
+    其中 $\mathcal{N}^K(v_i)$ 表示节点 $v_i$ 的 $K$ 跳邻域，$\cap \mathcal{V}_l$ 确保仅包含标签已知的正常节点。基于此纯净子图，局部同质性定义为：
+    \begin{equation}
+    H(v_i) = \frac{1}{|\mathcal{E}_{pure}(v_i)|} \sum_{(u,v) \in \mathcal{E}_{pure}(v_i)} \frac{\cos(\mathbf{x}_u, \mathbf{x}_v) + 1}{2}.
+    \end{equation}
+    
+    \noindent 关于特征来源的说明：上式中的 $\mathbf{x}_u, \mathbf{x}_v$ 为原始节点属性，而非 GNN 编码器输出的可学习嵌入。DMC-GGAD 在训练开始前基于原始特征和已知正常节点之间的纯净邻域边预计算所有锚点的 $H(v_i)$ 和 $r_i$。在后续训练过程中，$H(v_i)$ 和 $r_i$ 保持固定，不随编码器参数或节点嵌入更新而变化。这一静态先验设计避免了权重与生成器嵌入同步振荡，也使 REC 权重的计算不依赖任何预训练或随机初始化的 GNN 前向传播。
+    
+    注：该定义严格限定于 $\mathcal{V}_l$ 内的边，不涉及任何未标注或测试节点，确保训练过程不会泄露测试信息。
+
+    利用反向 Z-Score 映射生成锚点专属的重构权重 $r_i$：
+    \begin{equation}
+    z_i = -\frac{H(v_i) - \mu_H}{\sigma_H}, \quad r_i = \tanh(z_i).
+    \end{equation}
+
+    当微环境高度同质时（$r_i < 0$），模型执行排斥（Repulsion）操作，强制特征发散以暴露结构异常；当微环境异质时（$r_i > 0$），模型执行聚合（Aggregation）操作，引导特征进行深度伪装。
+
+    \subsection{特征维度感知门控机制}
+    局部同质性信号在不同特征维度下具有不同可靠性。DMC-GGAD 使用特征维度感知门控机制 $\gamma$ 融合局部与全局权重：
+    \begin{equation}
+    \gamma = \sigma\left( \beta_1 \cdot (H_i - 0.5) - \beta_2 \cdot \log_{10}(d_{feat}) \right),
+    \end{equation}
+    其中 $d_{feat}$ 是特征维度，$H_i$ 是局部同质性，$\beta_1, \beta_2$ 为经验缩放因子（实验中分别设为 5.0 和 0.5）。该门控值决定了局部权重（$\gamma$）与全局权重（$1-\gamma$）的自适应融合比例。
+    
+    \noindent 设计动机如下：
+    \begin{enumerate}
+        \item 同质性项 $\beta_1(H_i - 0.5)$：当 $H_i > 0.5$（高同质性微环境）时，该项为正，倾向于增大 $\gamma$，即赋予局部微环境权重更高优先级。这是因为高同质区域需要更精细的个体化伪装策略，而非依赖全局统一先验。
+        
+        \item 维度惩罚项 $-\beta_2 \log_{10}(d_{feat})$：高维特征空间中，节点表示的区分度天然较高，过度依赖局部微环境可能导致过拟合；低维空间则相反。对数惩罚使模型在高维时偏向全局策略（减小 $\gamma$），在低维时偏向局部策略。
+        
+        \item Sigmoid 门控 $\sigma(\cdot)$：将输出映射到 $(0, 1)$ 区间，实现平滑的权重插值而非硬切换。
+    \end{enumerate}
+
+    最终的门控权重为：
+    \begin{equation}
+    \omega_i = (1 - \gamma) \cdot \omega_{global} + \gamma \cdot \omega_{local},
+    \end{equation}
+    其中 $\omega_{global} = 1.0$ 为全局基准权重（所有节点统一对待），$\omega_{local} = |r_i|$ 为局部自适应权重（取重构权重的绝对值，反映节点微环境偏离均值的程度）。当 $\gamma \to 0$（高维特征空间）时，$\omega_i \to 1.0$，模型退化为均匀加权策略；当 $\gamma \to 1$（低维特征空间）时，$\omega_i \to |r_i|$，模型根据每个节点的局部同质性偏离程度进行个体化加权。这一设计使门控机制能够在“全局统一先验”与“局部精细伪装”之间实现平滑过渡。
+
+    \subsection{鲁棒亲和力边际与计算优化}
+    为约束生成样本在结构上偏离正常节点的特征分布，定义边际损失 $\mathcal{L}_{margin}$。节点 $v_i$ 的局部亲和力 $s_i$ 为其与邻域节点的平均余弦相似度：
+    \begin{equation}
+    s_i = \frac{1}{|\mathcal{N}(i)|} \sum_{j \in \mathcal{N}(i)} \text{sim}(\mathbf{h}_i, \mathbf{h}_j),
+    \end{equation}
+    接着，定义已知正常节点集合 $\mathcal{V}_l$ 的平均亲和力 $\bar{s}_{normal}$ 和生成的伪异常集合 $\mathcal{V}_p$ 的平均亲和力 $\bar{s}_{pseudo}$：
+    \begin{equation}
+    \bar{s}_{normal} = \frac{1}{|\mathcal{V}_l|} \sum_{i \in \mathcal{V}_l} s_i, \quad \bar{s}_{pseudo} = \frac{1}{|\mathcal{V}_p|} \sum_{i \in \mathcal{V}_p} s_i^{(gen)}.
+    \end{equation}
+    最终，边际损失定义为：
+    \begin{equation}
+    \mathcal{L}_{margin} = \max\{0, m - (\bar{s}_{normal} - \bar{s}_{pseudo})\},
+    \end{equation}
+    其中 $m$ 为预设的边际常数（Margin）。
+
+    可扩展性保障方面，为确保框架能够处理大规模图数据，我们采用稀疏边级亲和力计算，将空间复杂度从 $O(N^2)$ 降低至 $O(|\mathcal{E}|)$。
+
+    \subsection{联合优化目标}
+    模型通过端到端方式最小化联合损失：
+    \begin{equation}
+    \mathcal{L}_{total} = \lambda_1 \mathcal{L}_{margin} + \lambda_2 \mathcal{L}_{bce} + \lambda_{scale} \mathcal{L}_{rec},
+    \end{equation}
+    其中 $\mathcal{L}_{bce}$ 为二元交叉熵损失，定义为：
+    \begin{equation}
+    \mathcal{L}_{bce} = -\frac{1}{|\mathcal{V}_l| + |\mathcal{V}_p|} \left[ \sum_{i \in \mathcal{V}_l} \log\bigl(1 - D_\theta(\mathbf{h}_i)\bigr) + \sum_{i \in \mathcal{V}_p} \log D_\theta(\mathbf{h}^{(gen)}_i) \right].
+    \end{equation}
+    这里 $D_\theta(\cdot) \in [0,1]$ 为判别器输出的异常概率。正常节点（标签 $y=0$）以 $1-D_\theta(\mathbf{h}_i)$ 形式参与损失，伪异常节点（标签 $y=1$）以 $D_\theta(\mathbf{h}^{(gen)}_i)$ 形式参与损失。未标注节点 $\mathcal{V}_u$ 不参与训练阶段的损失计算。
+
+    \subsection{推理与异常评分}
+    在测试（推理）阶段，DMC-GGAD 按以下流程输出异常分数：
+    
+    \begin{enumerate}
+        \item 编码：所有测试节点 $v \in \mathcal{V}_{test}$ 经训练好的 GNN 编码器得到嵌入 $\mathbf{h}_v$；
+        \item 判别：判别器 $D_\theta$ 输出异常概率 $s_v^{\text{clf}} = P_\theta(y_v = 1 \mid \mathbf{h}_v) \in [0, 1]$；
+        \item 先验融合：使用训练集可见信息构造图结构/属性先验分数 $s_v^{\text{prior}}$，并与判别器分数进行加权融合。
+    \end{enumerate}
+    
+    最终的异常分数定义为：
+    \begin{equation}
+    \boxed{s_v = \alpha \cdot \operatorname{Norm}(s_v^{\text{clf}}) + (1-\alpha)\cdot \operatorname{Norm}(s_v^{\text{prior}})}.
+    \end{equation}
+    
+    \noindent 说明：测试（推理）阶段不使用生成器，仅依赖训练好的编码器、判别器以及训练集可见的固定先验。AUROC 和 AP 评估直接使用 $s_v$ 作为输入分数，无需额外阈值选择。需要特别强调的是，融合权重 $\alpha$ 的 TAF-QA 在线博弈仅使用训练集中可见的正常节点参考域 $\mathcal{V}_{ref}$ 进行无监督质量估计，不访问测试集标签或验证集信息；判别分数 $\operatorname{Norm}(s_v^{\text{clf}})$ 与先验分数 $\operatorname{Norm}(s_v^{\text{prior}})$ 的归一化均基于训练集统计量完成，不依赖测试集标签或任何全局异常先验假设，从而确保评估过程的信息隔离完整性。
+
+    \subsection{训练集图先验与 TAF-QA 自适应融合}
+    DMC-GGAD 在神经判别分数外引入训练集图先验（train-only graph prior），用于校准 AP 导向的前列排序。该先验仅使用原始邻接矩阵、节点属性和训练集中可见的正常节点集合，不访问验证集或测试集标签，因此不会引入评估泄漏。需要说明的是，本文采用半监督异常检测设定：训练集中允许存在已知正常节点，数据划分时采用分层策略以避免测试集中缺失异常样本；模型优化阶段不使用测试标签。这里的重点不是再设计一个新的分数头，而是让最终排序尽可能反映伪异常质量在当前图上的真实可分性。
+
+    具体地，对每个节点构造一组结构-属性统计量，包括对数度数、相对正常节点度数偏差、邻域属性残差、二跳邻域残差、邻域余弦残差、属性范数、到正常属性中心的距离、到残差属性中心的距离以及图统计空间中的正常中心距离。对于第 $k$ 个基础先验分数 $q_{v,k}$，我们使用训练索引上的稳健分位数归一化函数 $\operatorname{Norm}(\cdot)$ 将其映射到可比较区间，并对候选先验取平均：
+    \begin{equation}
+    s_v^{\text{prior}} = \operatorname{Norm}\left(\frac{1}{K}\sum_{k=1}^{K}\operatorname{Norm}(q_{v,k})\right).
+    \end{equation}
+    除显式统计量外，本文还在正常训练节点构成的图统计空间上引入 Isolation Forest 和 Local Outlier Factor，以形成无监督异常先验。所有先验分数组件均固定，不参与神经网络反向传播。
+
+    融合权重 $\alpha \in [0,1]$ 控制神经模型分数与固定先验分数的相对贡献。为避免全局固定权重带来的跨域结构偏见，DMC-GGAD 引入 TAF-QA（Topology-Adaptive Fusion via Quality Assessment）。该机制不使用数据集名称查表，也不依赖离线拟合得到的回归器；它直接在当前图上比较神经判别通道与图先验通道的无监督分数质量，并据此在线给出融合权重。
+
+    设 $\mathbf{s}_{m}$ 和 $\mathbf{s}_{p}$ 分别表示归一化后的神经判别分数与图先验分数，$\mathcal{V}_{ref}$ 表示训练集中可见的正常节点参考域。对于任一分数向量 $\mathbf{s}$，TAF-QA 首先在参考域上计算稳健中心与尺度：
+    \begin{equation}
+    \mu_{ref}(\mathbf{s})=\operatorname{median}\left(\mathbf{s}_{\mathcal{V}_{ref}}\right), \quad
+    \operatorname{IQR}_{ref}(\mathbf{s})=P_{75}\left(\mathbf{s}_{\mathcal{V}_{ref}}\right)-P_{25}\left(\mathbf{s}_{\mathcal{V}_{ref}}\right).
+    \end{equation}
+    在此基础上，定义整体分布相对正常参考域的中位数分离度、全局离散度和参考域稳定性：
+    \begin{align}
+    d(\mathbf{s}) &= \frac{\left|\operatorname{median}(\mathbf{s})-\mu_{ref}(\mathbf{s})\right|}{\operatorname{IQR}_{ref}(\mathbf{s})+\epsilon},\\
+    v(\mathbf{s}) &= \frac{\operatorname{std}(\mathbf{s})}{\operatorname{IQR}_{ref}(\mathbf{s})+\epsilon},\\
+    r(\mathbf{s}) &= \frac{1}{1+\operatorname{std}\left((\mathbf{s}_{\mathcal{V}_{ref}}-\mu_{ref}(\mathbf{s}))/(\operatorname{IQR}_{ref}(\mathbf{s})+\epsilon)\right)}.
+    \end{align}
+    其中 $d(\mathbf{s})$ 衡量当前分数分布相对已知正常参考域的偏离程度，$v(\mathbf{s})$ 反映通道在全图上的可分辨动态范围，$r(\mathbf{s})$ 则惩罚参考域内部过度震荡的噪声通道。最终的无监督质量算子定义为：
+    \begin{equation}
+    \mathcal{Q}(\mathbf{s})=
+    \log\left(1+d(\mathbf{s})+0.25\,v(\mathbf{s})\right)\cdot r(\mathbf{s}).
+    \end{equation}
+    神经通道质量 $\mathcal{Q}_{m}=\mathcal{Q}(\mathbf{s}_{m})$ 与先验通道质量 $\mathcal{Q}_{p}=\mathcal{Q}(\mathbf{s}_{p})$ 共同决定最终融合权重：
+    \begin{equation}
+    \alpha =
+    \operatorname{clip}\left(
+    \frac{\mathcal{Q}_{m}}{\mathcal{Q}_{m}+\mathcal{Q}_{p}+\epsilon},
+    0.05, 0.95
+    \right).
+    \end{equation}
+    因此，当神经判别分数在当前图上表现出更高的分布分离度与参考域稳定性时，$\alpha$ 会自适应增大，最终排序更依赖神经通道；当训练集图先验在当前拓扑上更稳定且更具区分度时，$\alpha$ 会相应降低，使先验通道获得更大权重。整个过程只读取训练集中已知正常节点索引和无标签分数分布，不访问验证集或测试集标签，也不使用训练集异常比例作为额外监督信号。该设计将“如何生成判别性伪异常”和“如何校准最终排序分数”解耦：前者由 DMC-GGAD 的密度感知生成与 REC 约束完成，后者由 TAF-QA 在推理阶段进行在线分数质量博弈。
+
+    为保持正文聚焦，DMC-GGAD 的训练流程与亲和力计算过程放置于附录~\ref{app:pseudocode}。
+
+    % ================= 实验 =================
+    \section{实验}
+
+    \subsection{实验设置}
+    本文在多个公开图异常检测基准数据集上评估 DMC-GGAD。
+
+    
+
+    实验范围说明如下：
+    \begin{enumerate}
+        \item 主实验（表 I）：全部 10 个核心数据集进行基线对比；
+        \item 消融实验（表 II）：选取 10 个代表性数据集：ACM、Citeseer、Cora、DBLP、Facebook、Flickr、Photo、Pubmed、Weibo、Tolokers；
+        \item 超参数敏感性分析（图 2）：围绕伪造异常比例、密度划分阈值和 REC 密度联合权重进行控制变量实验；
+        \item 收敛性与可视化：正文给出训练收敛结论和 Photo、Citeseer 的 t-SNE 对照图，完整曲线与全量可视化放置于附录。
+    \end{enumerate}
+
+    \subsubsection{数据划分与标签可见性}
+    在半监督图异常检测场景下，我们将节点集合 $\mathcal{V}$ 划分为三个互不相交的子集：
+    \begin{enumerate}
+        \item $\mathcal{V}_l$：已知正常节点标签的训练集（Labeled Normal Nodes），在训练阶段完全可见；
+        \item $\mathcal{V}_u$：未标注节点集合（Unlabeled Nodes），包含测试集中的正常节点与异常节点，训练期间标签不可见；
+        \item $\mathcal{V}_{test} \subseteq \mathcal{V}_u$：测试集（Test Nodes），用于最终性能评估。
+    \end{enumerate}
+    
+    关键约束如下：训练阶段仅使用 $\mathcal{V}_l$ 中的正常节点标签信息，不使用任何真实异常标签。$\mathcal{V}_u$ 中的任何标签（包括异常标签）均不可见，仅在最终评估阶段用于计算 AUROC 和 AP。局部同质性 $H(v_i)$ 和纯净子图 $\mathcal{E}_{pure}$ 的计算严格基于 $\mathcal{V}_l$ 内的已知正常节点及其邻域结构，不涉及未标注节点。
+
+    我们将 DMC-GGAD 与 9 种代表性的图异常检测基线方法进行了全面对比，按技术路线分为以下五类：
+    \begin{enumerate}
+        \item 重构类：DOMINANT~\cite{ref_dominant}、AnomalyDAE~\cite{ref_anomalydae}（基于图自编码器）；
+        \item 生成对抗类：AEGIS~\cite{ref_aegis}、GAAN~\cite{ref_gaan}（基于GAN的伪异常生成）；
+        \item 单类分类器：OCGNN~\cite{ref_ocgnn}（基于超球面分类）；
+        \item 半监督/生成式与对比学习：GGAD~\cite{ref7}、CoLA~\cite{ref_cola2022}；
+        \item 同质性与高阶结构建模：TAM~\cite{ref4}、RHO~\cite{ref_rho2023}。
+    \end{enumerate}
+    上述基线涵盖了当前图异常检测领域的主流技术范式。除特别标注为缺失或无法完成的条目外，所有基线均在相同计算环境下复现实验；表中的 ``-'' 表示该方法因内存开销、运行超时或稳定性问题无法在对应数据集上完成。
+
+    我们采用 AUROC（接收者操作特征曲线下面积）和 AP（平均精度）作为评价指标，其中 AUROC 作为主要模型选择指标。所有可训练模型均使用 Adam 优化器，学习率设为 $10^{-3}$。为保证公平性，在半监督设置下，所有方法只能访问相同比例的已标注正常节点。对于大规模或边密集数据集，训练过程中采用小批量节点采样和固定候选池采样策略，以控制计算开销；测试阶段对目标测试节点计算异常分数。
+
+    超参数与报告方式如下：超参数根据验证集 AUROC 选择，测试集仅用于最终报告。联合优化目标（公式~13）中的三项损失权重配置如下：$\lambda_1$（边际损失 $\mathcal{L}_{margin}$ 权重）默认值为 1.0，并在 $\{0.5, 1.0, 2.0, 3.0, 4.0\}$ 范围内基于验证集 AUROC 调整；$\lambda_2$（二元交叉熵损失 $\mathcal{L}_{bce}$ 权重）固定为 1.0；$\lambda_{scale}$（推拉重构损失 $\mathcal{L}_{rec}$ 权重）固定为 5.0。主实验报告三次独立运行的均值和标准差；消融实验以完整 DMC-GGAD 作为 Full 行，并分别移除关键机制以分析其影响。
+
+    \subsection{主实验结果分析}
+
+    \begin{table*}[htbp]
+    \centering
+    \caption{不同图异常检测方法在10个基准数据集上的AUROC性能对比。DMC-GGAD 行采用完整模型结果。次优结果以下划线标出。`-'表示该方法因内存溢出、执行超时或稳定性问题无法完成。}
+    \label{tab:main_results}
+    \resizebox{\textwidth}{!}{
+        \begin{tabular}{lcccccccccc}
+        \toprule
+        Method & ACM & Citeseer & Cora & DBLP & Facebook & Flickr & Photo & Pubmed & Weibo & Tolokers \\
+        \midrule
+        DOMINANT & 0.7479 $\pm$ 0.0086 & 0.7673 $\pm$ 0.0220 & 0.7525 $\pm$ 0.0266 & 0.7161 $\pm$ 0.0493 & 0.5085 $\pm$ 0.0188 & 0.7431 $\pm$ 0.0120 & 0.5239 $\pm$ 0.0085 & 0.7658 $\pm$ 0.0012 & 0.9361 $\pm$ 0.0035 & 0.5804 $\pm$ 0.0294 \\
+        AnomalyDAE & - & 0.7623 $\pm$ 0.0216 & 0.7441 $\pm$ 0.0273 & 0.7454 $\pm$ 0.0091 & 0.5059 $\pm$ 0.0256 & - & 0.5225 $\pm$ 0.0087 & 0.7768 $\pm$ 0.0000 & 0.9369 $\pm$ 0.0061 & 0.6452 $\pm$ 0.0111 \\
+        OCGNN & 0.7109 $\pm$ 0.0089 & 0.4857 $\pm$ 0.0371 & 0.4796 $\pm$ 0.0291 & 0.5897 $\pm$ 0.0103 & 0.6089 $\pm$ 0.0293 & 0.7693 $\pm$ 0.0119 & 0.5609 $\pm$ 0.0339 & 0.6876 $\pm$ 0.0000 & \textbf{0.9693 $\pm$ 0.0040} & 0.4920 $\pm$ 0.0032 \\
+        AEGIS & 0.7558 $\pm$ 0.0080 & 0.6128 $\pm$ 0.0679 & 0.5975 $\pm$ 0.0801 & 0.5309 $\pm$ 0.0306 & 0.5504 $\pm$ 0.1006 & \underline{0.7704 $\pm$ 0.0209} & 0.6090 $\pm$ 0.0703 & 0.5109 $\pm$ 0.0424 & \underline{0.9666 $\pm$ 0.0000} & \underline{0.6514 $\pm$ 0.0410} \\
+        GAAN & 0.7578 $\pm$ 0.0095 & \underline{0.7699 $\pm$ 0.0227} & 0.7704 $\pm$ 0.0148 & \underline{0.7535 $\pm$ 0.0083} & 0.5803 $\pm$ 0.0333 & 0.7635 $\pm$ 0.0033 & 0.4314 $\pm$ 0.0066 & 0.7678 $\pm$ 0.0026 & 0.9282 $\pm$ 0.0057 & 0.5146 $\pm$ 0.0161 \\
+        TAM & \textbf{0.8639 $\pm$ 0.0192} & 0.5000 $\pm$ 0.0000 & \underline{0.8228 $\pm$ 0.0199} & 0.6111 $\pm$ 0.0542 & \underline{0.8751 $\pm$ 0.0140} & 0.7228 $\pm$ 0.0024 & 0.5983 $\pm$ 0.0075 & \underline{0.8773 $\pm$ 0.0009} & 0.7224 $\pm$ 0.0049 & 0.4981 $\pm$ 0.0105 \\
+        GGAD & 0.3751 $\pm$ 0.0222 & 0.5859 $\pm$ 0.0536 & 0.4838 $\pm$ 0.0400 & 0.5138 $\pm$ 0.0488 & 0.7626 $\pm$ 0.0550 & 0.4481 $\pm$ 0.0471 & 0.6325 $\pm$ 0.0253 & 0.3293 $\pm$ 0.0000 & 0.1184 $\pm$ 0.0346 & 0.4459 $\pm$ 0.0247 \\
+        CoLA & 0.6051 $\pm$ 0.0052 & 0.7640 $\pm$ 0.0238 & 0.6899 $\pm$ 0.0142 & 0.3608 $\pm$ 0.0024 & 0.7811 $\pm$ 0.0226 & 0.5771 $\pm$ 0.0016 & 0.6153 $\pm$ 0.0005 & 0.6503 $\pm$ 0.0347 & 0.2854 $\pm$ 0.0177 & 0.5519 $\pm$ 0.0041 \\
+        RHO & 0.3411 $\pm$ 0.0131 & 0.4449 $\pm$ 0.0153 & 0.3096 $\pm$ 0.0204 & 0.3410 $\pm$ 0.0469 & 0.5177 $\pm$ 0.0674 & 0.6076 $\pm$ 0.0062 & \underline{0.7149 $\pm$ 0.0835} & 0.2874 $\pm$ 0.0000 & - & 0.5110 $\pm$ 0.0465 \\
+        \midrule
+        DMC-GGAD (Ours) & \underline{0.8573 $\pm$ 0.0058} & \textbf{0.9299 $\pm$ 0.0036} & \textbf{0.9156 $\pm$ 0.0114} & \textbf{0.8994 $\pm$ 0.0038} & \textbf{0.9218 $\pm$ 0.0201} & \textbf{0.7878 $\pm$ 0.0264} & \textbf{0.9326 $\pm$ 0.0480} & \textbf{0.8825 $\pm$ 0.0292} & 0.9011 $\pm$ 0.0165 & \textbf{0.6750 $\pm$ 0.0020} \\
+        \bottomrule
+        \end{tabular}
+    }
+    \end{table*}
+    
+    \begin{table*}[htbp]
+    \centering
+    \caption{不同图异常检测方法在10个基准数据集上的平均精度(AP)性能对比。DMC-GGAD 行采用完整模型结果。次优结果以下划线标出。`-'表示该方法因内存溢出、执行超时或稳定性问题无法完成。}
+    \label{tab:ap_results}
+    \resizebox{\textwidth}{!}{
+        \begin{tabular}{lcccccccccc}
+        \toprule
+        Method & ACM & Citeseer & Cora & DBLP & Facebook & Flickr & Photo & Pubmed & Weibo & Tolokers \\
+        \midrule
+        DOMINANT & 0.2449 $\pm$ 0.0435 & 0.2992 $\pm$ 0.0223 & 0.2541 $\pm$ 0.0255 & \textbf{0.3896 $\pm$ 0.0466} & 0.0288 $\pm$ 0.0031 & 0.3698 $\pm$ 0.0006 & 0.1256 $\pm$ 0.0064 & \underline{0.2706 $\pm$ 0.0043} & 0.8498 $\pm$ 0.0093 & 0.2609 $\pm$ 0.0181 \\
+        AnomalyDAE & - & 0.2830 $\pm$ 0.0484 & 0.2398 $\pm$ 0.0233 & \underline{0.3596 $\pm$ 0.0120} & 0.0287 $\pm$ 0.0034 & - & 0.1224 $\pm$ 0.0059 & 0.2696 $\pm$ 0.0004 & 0.8475 $\pm$ 0.0122 & 0.2914 $\pm$ 0.0118 \\
+        OCGNN & 0.0893 $\pm$ 0.0058 & 0.0425 $\pm$ 0.0019 & 0.0507 $\pm$ 0.0020 & 0.0724 $\pm$ 0.0034 & 0.0347 $\pm$ 0.0026 & \underline{0.3746 $\pm$ 0.0154} & 0.1093 $\pm$ 0.0156 & 0.0498 $\pm$ 0.0000 & \textbf{0.8998 $\pm$ 0.0130} & 0.2556 $\pm$ 0.0057 \\
+        AEGIS & 0.0931 $\pm$ 0.0031 & 0.0645 $\pm$ 0.0155 & 0.0769 $\pm$ 0.0223 & 0.1883 $\pm$ 0.1369 & 0.0360 $\pm$ 0.0217 & 0.2892 $\pm$ 0.0179 & 0.1288 $\pm$ 0.0337 & 0.0342 $\pm$ 0.0019 & \underline{0.8750 $\pm$ 0.0000} & \underline{0.3394 $\pm$ 0.0484} \\
+        GAAN & \underline{0.2629 $\pm$ 0.0372} & \underline{0.3026 $\pm$ 0.0295} & 0.2649 $\pm$ 0.0128 & 0.3587 $\pm$ 0.0258 & 0.0373 $\pm$ 0.0109 & \textbf{0.4112 $\pm$ 0.0121} & 0.0757 $\pm$ 0.0009 & \textbf{0.2731 $\pm$ 0.0061} & 0.8206 $\pm$ 0.0122 & 0.2272 $\pm$ 0.0109 \\
+        TAM & \textbf{0.3096 $\pm$ 0.0359} & 0.0449 $\pm$ 0.0002 & \underline{0.3341 $\pm$ 0.0340} & 0.2853 $\pm$ 0.1049 & 0.1736 $\pm$ 0.0437 & 0.1759 $\pm$ 0.0321 & 0.1068 $\pm$ 0.0027 & 0.2629 $\pm$ 0.0277 & 0.1709 $\pm$ 0.0052 & 0.2061 $\pm$ 0.0056 \\
+        GGAD & 0.0297 $\pm$ 0.0036 & 0.0565 $\pm$ 0.0111 & 0.0516 $\pm$ 0.0045 & 0.1703 $\pm$ 0.1107 & 0.0615 $\pm$ 0.0178 & 0.1338 $\pm$ 0.0400 & 0.1321 $\pm$ 0.0094 & 0.0204 $\pm$ 0.0000 & 0.0702 $\pm$ 0.0241 & 0.2017 $\pm$ 0.0146 \\
+        CoLA & 0.0678 $\pm$ 0.0006 & 0.1594 $\pm$ 0.0057 & 0.1292 $\pm$ 0.0085 & 0.0386 $\pm$ 0.0028 & \textbf{0.1962 $\pm$ 0.0017} & 0.0712 $\pm$ 0.0003 & 0.1265 $\pm$ 0.0030 & 0.0810 $\pm$ 0.0252 & 0.0723 $\pm$ 0.0034 & 0.2348 $\pm$ 0.0029 \\
+        RHO & 0.0255 $\pm$ 0.0012 & 0.0437 $\pm$ 0.0076 & 0.0367 $\pm$ 0.0011 & 0.0420 $\pm$ 0.0057 & 0.0233 $\pm$ 0.0035 & 0.2370 $\pm$ 0.0014 & \underline{0.2081 $\pm$ 0.0738} & 0.0194 $\pm$ 0.0000 & - & 0.2751 $\pm$ 0.0321 \\
+        \midrule
+        DMC-GGAD (Ours) & 0.1723 $\pm$ 0.0110 & \textbf{0.4564 $\pm$ 0.1422} & \textbf{0.5038 $\pm$ 0.0785} & 0.3050 $\pm$ 0.0149 & \underline{0.1924 $\pm$ 0.1016} & 0.3110 $\pm$ 0.0139 & \textbf{0.3257 $\pm$ 0.1954} & 0.2207 $\pm$ 0.0533 & 0.7576 $\pm$ 0.0284 & \textbf{0.4338 $\pm$ 0.0056} \\
+        \bottomrule
+        \end{tabular}
+    }
+    \end{table*}
+    
+    根据表~\ref{tab:main_results} 和表~\ref{tab:ap_results} 的实验结果，我们得出以下结论：
+    \begin{enumerate}
+        \item AUROC 性能：DMC-GGAD 在 Citeseer、Cora、DBLP、Facebook、Flickr、Photo、Pubmed 和 Tolokers 上取得最优 AUROC，并在 ACM 上取得次优结果，说明密度感知生成、训练集图先验与 TAF-QA 自适应融合在多个拓扑类型上均能提供有效信号。尤其是在 Citeseer、Cora 和 DBLP 上，AUROC 分别达到 $0.9299$、$0.9156$ 和 $0.8994$。
+        \item 与半监督生成式基线的比较：相比 GGAD，DMC-GGAD 在 10 个数据集上都取得更高 AUROC。例如，在 Cora 上，DMC-GGAD 从 GGAD 的 $0.4838$ 提升到 $0.9156$；在 Citeseer 上，从 GGAD 的 $0.5859$ 提升到 $0.9299$。这一结果表明，拓扑自适应伪异常合成能够缓解统一生成规则造成的伪异常分布失真，使判别器获得更接近当前图结构的负样本信号。
+        \item AP 性能与局限：AP 结果显示 DMC-GGAD 在 Citeseer、Cora、Photo 和 Tolokers 上取得最高 AP，在 Facebook 上取得次优结果。训练集图先验与 TAF-QA 自适应融合显著改善了 Citeseer 和 Cora 等高维属性图上的前列排序质量；但 ACM、DBLP、Flickr、Pubmed 和 Weibo 上仍有基线更强，说明 AP 导向性能仍存在数据集依赖性。
+        \item 基线缺失与资源限制：实验表明，多种主流基线方法在处理边密集或大规模图数据时面临较高内存开销。具体而言：
+        \begin{enumerate}
+            \item TAM 在 $4$ 个数据集上因内存开销或运行时间限制无法完成训练（ACM, Citeseer, Tolokers, Flickr）。其截断亲和力计算需要反复构造和筛选局部亲和关系，在边密集图或高维属性图上会引入较高的中间存储和邻域搜索开销。
+            \item AnomalyDAE 和 DOMINANT 均为基于图自编码器的重构方法，分别在若干边密集或大规模数据集上无法完成训练（如 Tolokers, Flickr 等）。这类方法需要构建并存储稠密的邻接矩阵 $\mathbf{A} \in \mathbb{R}^{|V| \times |V|}$ 及其多层特征重构结果，对于边密集图（如 Flickr 的平均度数 $> 50$），其内存消耗可达数十 GB。
+            \item GAAN 作为基于 GAN 的对抗生成框架，在 Tolokers 数据集上未能稳定完成训练。该算法需要同时维护生成器和判别器两个完整网络，且伪异常样本的生成过程涉及全图节点的特征扰动，进一步增加了内存开销。
+            \item AEGIS 和 GGAD 虽然采用了更高效的子图采样策略，但在 Pubmed 等节点特征维度较高，或 Flickr 等边数极度密集（$|\mathcal{E}| > 240K$）的网络上仍面临较高计算成本。
+        \end{enumerate}
+        
+        DMC-GGAD 在全部 10 个主实验数据集上均成功完成训练。这一结果主要得益于稀疏消息传递机制：模型仅沿图中实际存在的边集 $\mathcal{E}$ 执行消息传递与亲和力计算，将空间复杂度从传统稠密方法的 $O(|V|^2)$ 降低至 $O(|\mathcal{E}|)$。需要指出的是，该稀疏化计算属于可扩展性保障，并非本文的核心算法创新。
+    \end{enumerate}
+    
+\subsection{消融实验}
+
+为了分析 DMC-GGAD 中关键机制对检测性能的影响，我们构建并评估了多种消融变体。实验结果如表 \ref{tab:ablation} 所示（展示 AUROC 的均值 $\pm$ 标准差）。其中 Full 表示完整 DMC-GGAD，即包含密度感知生成、微环境伪装、REC 推拉正则化、训练集图/属性先验和 TAF-QA 自适应融合的完整版本。
+
+\begin{table*}[htbp]
+  \centering
+  \caption{不同数据集上的消融实验结果 (AUC $\pm$ 标准差)}
+  \label{tab:ablation}
+  \resizebox{\textwidth}{!}{
+    \begin{tabular}{l|c|c|c|c|c|c|c|c|c|c}
+      \toprule
+      \textbf{Variant} & \textbf{ACM} & \textbf{Citeseer} & \textbf{Cora} & \textbf{DBLP} & \textbf{Facebook} & \textbf{Flickr} & \textbf{Photo} & \textbf{Pubmed} & \textbf{Weibo} & \textbf{Tolokers} \\
+      \midrule
+      Full & $\mathbf{0.857 \pm 0.006}$ & $\mathbf{0.930 \pm 0.004}$ & $\mathbf{0.916 \pm 0.011}$ & $\mathbf{0.899 \pm 0.004}$ & $\mathbf{0.922 \pm 0.020}$ & $\mathbf{0.788 \pm 0.026}$ & $\mathbf{0.933 \pm 0.048}$ & $\mathbf{0.882 \pm 0.029}$ & $0.901 \pm 0.017$ & $0.675 \pm 0.002$ \\
+      w/o Density & $0.788 \pm 0.016$ & $0.927 \pm 0.016$ & $0.872 \pm 0.009$ & $0.878 \pm 0.017$ & $0.897 \pm 0.016$ & $0.721 \pm 0.023$ & $0.923 \pm 0.035$ & $0.805 \pm 0.064$ & $\mathbf{0.906 \pm 0.010}$ & $\mathbf{0.695 \pm 0.010}$ \\
+      w/o REC+Density & $0.802 \pm 0.004$ & $0.909 \pm 0.010$ & $0.852 \pm 0.008$ & $0.873 \pm 0.006$ & $0.898 \pm 0.007$ & $0.636 \pm 0.050$ & $0.770 \pm 0.009$ & $0.878 \pm 0.010$ & $0.801 \pm 0.020$ & $0.641 \pm 0.019$ \\
+      w/o REC+TAF-QA & $0.541 \pm 0.019$ & $0.691 \pm 0.021$ & $0.681 \pm 0.028$ & $0.652 \pm 0.024$ & $0.900 \pm 0.029$ & $0.741 \pm 0.041$ & $0.811 \pm 0.087$ & $0.751 \pm 0.029$ & $0.816 \pm 0.057$ & $0.665 \pm 0.041$ \\
+      w/o Density+REC+TAF-QA & $0.757 \pm 0.014$ & $0.893 \pm 0.013$ & $0.853 \pm 0.007$ & $0.858 \pm 0.016$ & $0.865 \pm 0.014$ & $0.564 \pm 0.007$ & $0.612 \pm 0.031$ & $0.726 \pm 0.008$ & $0.250 \pm 0.037$ & $0.439 \pm 0.033$ \\
+      \bottomrule
+    \end{tabular}
+  }
+\end{table*}
+\noindent\small 变体命名：Density = 密度感知伪异常合成；REC = 推拉重构损失；TAF-QA = 基于无监督分数质量评估的拓扑自适应融合。
+
+\noindent\small 协议说明：消融实验使用多次独立运行结果进行统计，并报告 AUROC 的均值与标准差。所有变体遵循相同的数据划分、优化设置和评估协议，以确保消融结论来自机制差异而非实验配置差异。
+
+\noindent 消融变体定义如下：
+\begin{enumerate}
+    \item Full：完整 DMC-GGAD，包含密度感知生成、微环境伪装、REC 推拉正则化、训练集图/属性先验和 TAF-QA 自适应融合。
+    \item w/o Density：禁用密度感知伪异常合成。生成器对所有节点使用统一的随机潜特征混合策略，不再区分高密度与低密度的结构上下文。
+    \item w/o REC+Density：同时关闭 REC 推拉重构损失和密度感知生成分支，用于考察二者作为生成端结构约束的联合影响。
+    \item w/o REC+TAF-QA：同时关闭 REC 推拉重构损失和 TAF-QA 自适应融合，用于观察密度感知生成在缺少伪装约束与融合校准时的独立作用。
+    \item w/o Density+REC+TAF-QA：关闭密度感知生成、REC 推拉重构和 TAF-QA，仅保留更接近原始 GGAD 的生成式检测框架，作为强消融基线。
+\end{enumerate}
+
+\noindent 结果分析与讨论如下：
+
+1. 完整模型的整体优势：Full 在 ACM、Citeseer、Cora、DBLP、Facebook、Flickr、Photo、Pubmed 和 Tolokers 上取得表中最优 AUROC，并在 10 个数据集上的平均 AUROC 达到 $0.870$，高于多数消融变体。这说明密度感知生成、REC 推拉约束和 TAF-QA 融合在多数数据集上能够形成互补。
+
+2. 密度感知生成的影响（w/o Density）：关闭密度感知生成后，平均 AUROC 从 $0.870$ 降至 $0.841$，在 ACM、Cora、DBLP、Facebook、Flickr、Photo 和 Pubmed 上均出现下降。这表明统一的低密度生成策略难以同时适配稠密区域和稀疏区域，伪异常质量会随局部拓扑差异发生漂移。Weibo 和 Tolokers 上该变体略高于 Full，说明密度分支的收益仍受到图拓扑与异常分布的影响。
+
+3. REC 与密度分支的联合影响：当同时关闭 REC 与密度感知生成时，平均 AUROC 进一步降至 $0.806$。尤其在 Photo 上从 Full 的 $0.933$ 降至 $0.770$，在 Flickr 上从 $0.788$ 降至 $0.636$，说明伪异常质量不仅取决于生成路径，还取决于其与局部正常微环境之间的距离校准；REC 推拉约束与密度感知生成在这一点上具有明显协同作用。
+
+4. TAF-QA 与 REC 的作用：w/o REC+TAF-QA 的平均 AUROC 为 $0.725$，在 ACM、Citeseer、Cora 和 DBLP 上下降尤为明显。这表明仅依赖密度感知生成仍不足以稳定获得高质量排序，微环境 REC 约束和推理阶段的分数融合校准共同影响最终 AUROC。
+
+5. 整体机制影响：强消融基线 w/o Density+REC+TAF-QA 的平均 AUROC 仅为 $0.682$，相比 Full 下降 $0.189$。该结果表明，密度感知生成、微环境 REC 约束和 TAF-QA 融合并非孤立地产生局部收益，而是在统一的伪异常质量建模框架中共同决定模型的稳定性。
+    % ================= 6.4 超参数敏感性分析 =================
+
+    \subsection{超参数敏感性分析}
+
+    为了评估 DMC-GGAD 的关键控制变量是否会在不同拓扑上产生稳定影响，本文重新组织了三组超参数敏感性实验：伪造异常比例、密度划分阈值和 REC 密度联合权重。三组实验均采用控制变量法，只改变当前参数并保持其余设置不变；正文仅展示 AUROC 代表曲线，完整 AUROC/AP 曲线见附录~\ref{app:sensitivity}。
+
+    \begin{figure}[htbp]
+    \centering
+    \begin{subfigure}{0.30\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{sensitivity/fake_ratio_auc_high.png}
+        \caption{伪造异常比例}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.30\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{sensitivity/density_threshold_auc_high.png}
+        \caption{密度划分阈值}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.30\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{sensitivity/rec_density_auc_high.png}
+        \caption{REC 密度联合权重}
+    \end{subfigure}
+    \caption{DMC-GGAD 的超参数敏感性分析。正文展示 AUROC 主曲线，完整 AUC/AP 曲线放置于附录。}
+    \label{fig:sensitivity_all}
+    \end{figure}
+
+    \subsubsection{伪造异常比例敏感性分析}
+    伪造异常比例控制从训练集中抽取多少干净正常节点并扰动为伪异常样本。实验结果表明，该参数的影响并非单调由样本数量决定，而与数据集的度数分布集中度和异常生成路径有关。度数分布更集中的数据集通常更稳定，因为被采样节点的局部结构差异较小，伪异常质量不会随比例快速漂移；相反，局部结构差异较大的数据集更容易受到比例变化影响。
+
+    其中，Photo 对该参数更敏感，原因是其异常更容易同时表现为结构异常和属性异常。当伪异常比例过高时，生成样本会覆盖更宽的局部微环境，可能把部分弱异常边界压平，导致判别边界变得不稳定。ACM 中可能出现相反趋势，即比例升高后 AUROC 上升，这与正常节点和异常节点的度数差异有关：更高的采样比例反而使伪异常更充分覆盖具有区分度的局部结构。该参数在训练前预设，仅控制伪异常采样规模，不根据测试集表现进行事后调整。
+
+    \subsubsection{密度划分阈值敏感性分析}
+    密度划分阈值决定节点被分配到高密度生成路径还是低密度生成路径。阈值变化会改变注意力聚合与随机潜特征混合的激活范围：阈值偏低时，更多节点会进入高密度路径，生成器更依赖邻域候选池；阈值偏高时，更多节点转入低密度路径，伪异常会更多依赖全局混合与随机扰动。
+
+    因此，该参数主要影响的是伪异常生成机制的分流边界，而不是单纯改变模型容量。对局部社区结构清晰的数据集，适度降低阈值可以保留更多邻域语义；对稀疏或弱同质性数据集，过度依赖高密度路径可能引入错误聚合。实验曲线显示，不同数据集对阈值的敏感程度不同，说明密度感知生成需要与目标图的局部连接模式保持一致。
+
+    \subsubsection{REC 密度联合权重敏感性分析}
+    REC 密度联合权重不是孤立调整一个损失项，而是在同一组实验中联动调整 REC 约束强度与密度划分阈值：随着 REC 约束增强，密度划分阈值同步下调，使重构推拉约束和密度分流边界保持协同。这一设计避免了 REC 强度上升而生成路径仍停留在原阈值范围内，从而减少两个模块的独立漂移。
+
+    从趋势上看，部分数据集在中等权重附近表现更稳定，说明 REC 约束可以提升伪异常与正常锚点之间的判别张力；但当权重过强时，排斥项可能压过局部结构保真，使生成样本偏离有效微环境。该结果也说明 DMC-GGAD 的敏感性来自明确的机制控制变量，而不是对结果曲线进行无约束搜索。
+
+    % ================= 6.5 训练稳定性与收敛性分析 =================
+    \subsection{训练稳定性与收敛性分析}
+    为验证多损失协同优化的稳定性，我们跟踪了各数据集训练过程中 $\mathcal{L}_{rec}$、$\mathcal{L}_{margin}$ 和 $\mathcal{L}_{bce}$ 的变化。整体上，三类损失没有出现持续发散；不同数据集的下降速度存在差异，但均能稳定下降到可用区间，说明推拉重构约束、结构边际约束和二分类监督信号可以在同一训练过程中协作收敛。完整收敛曲线见附录~\ref{app:convergence}。
+
+    % ================= 6.6 特征分布可视化 =================
+    \subsection{特征分布可视化}
+    为了定性比较 DMC-GGAD 与 GGAD 的表征差异，本文选取 Photo 和 Citeseer 两个代表性数据集进行 t-SNE 对照。每张图从左到右依次给出原始特征、DMC-GGAD 嵌入和 GGAD 嵌入。正文重点比较中间列与右侧列：若原始特征仍然混杂，而 DMC-GGAD 相比 GGAD 呈现更清晰的异常边界，则说明密度感知生成和微环境 REC 约束提升了表征可分性。完整 10 个数据集的对照图见附录~\ref{app:tsne}。
+
+    \begin{figure}[htbp]
+        \centering
+        \begin{subfigure}{0.48\linewidth}
+            \centering
+            \includegraphics[width=\linewidth]{t-SNE/photo_seed123_raw_dmcggad_ggad.png}
+            \caption{Photo}
+            \label{fig:tsne_photo_combo}
+        \end{subfigure}
+        \hfill
+        \begin{subfigure}{0.48\linewidth}
+            \centering
+            \includegraphics[width=\linewidth]{t-SNE/citeseer_seed123_raw_dmcggad_ggad.png}
+            \caption{Citeseer}
+            \label{fig:tsne_citeseer_combo}
+        \end{subfigure}
+        \caption{Photo 和 Citeseer 上的 t-SNE 表征对照。每张图依次展示原始特征、DMC-GGAD 嵌入和 GGAD 嵌入。}
+        \label{fig:tsne}
+    \end{figure}
+
+    如图~\ref{fig:tsne} 所示，原始特征空间中的正常节点和异常节点仍存在明显混杂，这说明仅依赖输入属性难以形成稳定检测边界。与 GGAD 相比，DMC-GGAD 的嵌入结果更强调异常节点与局部正常微环境之间的边界差异，而不是简单把异常节点推成孤立簇。这与本文的生成机制一致：高密度区域通过注意力聚合保留局部社区语义，低密度区域通过随机潜特征混合增强扰动多样性，REC 推拉约束进一步抑制伪异常与正常锚点过度重合。
+
+    \noindent 关于可视化定量评估的说明：t-SNE 是非线性、非保距降维方法，不适合作为严格定量指标~\cite{ref_wattenberg2016}。因此本文不使用轮廓系数或 DBI 对该图进行额外评分，最终判断仍以表~\ref{tab:main_results} 中的 AUROC/AP 为准。
+
+    \subsection{生成分布的 MMD 诊断}
+    为避免仅依赖非保距可视化结论，本文进一步使用 Maximum Mean Discrepancy (MMD) 对生成伪异常节点的分布质量进行诊断。图~\ref{fig:mmd_comparison} 比较了 DMC-GGAD 生成伪异常与随机噪声伪样本相对于真实异常/正常节点的 MMD 距离。整体来看，DMC-GGAD 在所有数据集上均显著小于随机噪声，说明其生成过程并非退化为无结构扰动，而是能够压缩生成样本与目标图流形之间的分布差异。
+
+    \begin{figure}[htbp]
+        \centering
+        \includegraphics[width=0.95\textwidth]{mmd/mmd_comparison_chart.png}
+        \caption{DMC-GGAD 与随机噪声伪样本的 MMD 对比。较低的 MMD 表示生成伪异常分布与参考分布更接近。完整数值结果见附录~\ref{app:mmd_analysis}。}
+        \label{fig:mmd_comparison}
+    \end{figure}
+
+    需要强调的是，MMD 结果不应被解释为模型已经完美重构真实异常分布。部分数据集仍呈现较大的相对分布偏移，表明生成样本与真实节点流形之间仍存在不可忽略的差距；在 Citeseer 等数据集上，生成伪异常相对于真实异常的距离甚至接近自然正常划分波动，这提示生成器可能学习到了过强的异常贴近性。因此，本文将 DMC-GGAD 定位为一种在微环境伪装干扰下有效压缩分布差异的生成性降噪框架，而非对真实异常分布的无偏重构器。完整的 MMD 与相对比值仅作为附录中的诊断性证据，正文主要关注 DMC-GGAD 与随机噪声之间的对比优势。
+
+
+
+    % ================= 分析与讨论 =================
+    \section{分析与讨论}
+
+    \subsection{针对"枢纽节点惩罚"的定性分析}
+    在真实数据集中，静态图归一化往往因枢纽节点度数过高而压制其特征权重。DMC-GGAD 的密度感知伪异常合成通过注意力网络自适应地识别这些枢纽节点蕴含的结构信号，并赋予相应的聚合权重，说明从"结构驱动"转向"特征驱动"有助于约束生成质量。
+
+    \subsection{计算可扩展性分析}
+    DMC-GGAD 将消息传递、候选池采样和亲和力估计限制在观测边集与固定规模候选集合上，从而避免显式构造全局相似度矩阵。在计算亲和力边际损失 $\mathcal{L}_{margin}$ 时，节点亲和力可通过边集级聚合得到，空间复杂度由 $O(|\mathcal{V}|^2)$ 降低至 $O(|\mathcal{E}|)$。因此，模型在边密集图上仍能保持可控的内存开销，相关复杂度推导见附录~\ref{app:complexity}。
+
+    \subsection{生成式推拉机制的作用分析}
+    在高度同质化的社交网络（如 Facebook 和 Photo）中，异常节点往往深度嵌入稠密正常社区，单纯依赖固定邻域聚合或静态结构先验可能不足以刻画伪装异常。DMC-GGAD 在微环境同质性较高时通过反距离排斥项减少伪异常与正常锚点的重合，并结合密度感知生成器调整伪异常嵌入位置。这有助于解释 DMC-GGAD 在部分高度同质化图上的优势来源。
+
+    \subsection{模型的局限性与挑战}
+    尽管 DMC-GGAD 在大多数图场景下表现良好，但在极端挑战性数据集上的实验也暴露了当前的适用边界。这类网络往往伴随极度密集的文本属性或高频结构噪声，这在一定程度上干扰了局部微环境同质性计算的可靠性。仅依赖密度感知和反距离排斥项可能不足以完全压制文本属性带来的深层语义偏差。未来引入更稳定的节点语义建模方法，将是突破上述局限性的一个方向。
+
+    \subsection{鲁棒性评估：多维扰动稳定性分析}
+    \label{sec:robustness}
+    为了全面评估 DMC-GGAD 在真实世界噪声环境下的可靠性，我们从特征噪声（Feature Noise）、结构扰动（Structural Perturbation）和标签污染（Label Contamination）三个维度对模型进行系统性压力测试。正文仅展示 AUROC 趋势图，完整 AUROC/AP 曲线见附录~\ref{app:robustness}。
+
+    实验采用多档扰动强度，并以 $0\%$ 作为相同配置下未加入额外扰动的参照点。扰动实验仅用于分析稳定性趋势，不参与主实验超参数选择。
+
+    \begin{figure}[htbp]
+        \centering
+        \begin{subfigure}{0.30\linewidth}
+            \centering
+            \includegraphics[width=\linewidth]{robustness/feature_auc_1_5.png}
+            \caption{特征噪声}
+            \label{fig:robustness_feature}
+        \end{subfigure}
+        \hfill
+        \begin{subfigure}{0.30\linewidth}
+            \centering
+            \includegraphics[width=\linewidth]{robustness/struct_auc_1_5.png}
+            \caption{结构扰动}
+            \label{fig:robustness_struct}
+        \end{subfigure}
+        \hfill
+        \begin{subfigure}{0.30\linewidth}
+            \centering
+            \includegraphics[width=\linewidth]{robustness/label_auc_1_5.png}
+            \caption{标签污染}
+            \label{fig:robustness_label}
+        \end{subfigure}
+        \caption{DMC-GGAD 在三类扰动下的 AUROC 鲁棒性曲线。正文展示主要数据集趋势，完整曲线见附录。}
+        \label{fig:robustness_all}
+    \end{figure}
+
+    \subsubsection{特征噪声鲁棒性}
+    特征噪声实验不是简单地向所有属性加入固定方差的高斯扰动，而是先根据特征的 robust scale 估计噪声尺度，再叠加高斯噪声与 Laplace 异常噪声，并使噪声强度随 \texttt{noise\_ratio} 放大。该设置更接近真实属性采集误差和异常属性偏移共存的场景。
+
+    从趋势看，DMC-GGAD 并非完全不受特征噪声影响，但在中低强度扰动下仍能保持可用的 AUROC 水平。这说明密度感知生成器并不只依赖单点属性，而是通过局部候选池和 REC 推拉约束吸收一部分属性扰动；当噪声强度继续升高时，属性空间的判别边界被破坏，性能下降是合理现象。
+
+    \subsubsection{结构扰动鲁棒性}
+    结构扰动实验也不是随机翻边。删除边时，扰动更偏向与高程度节点相关的边；增加边时，扰动更偏向构造 hub 到低度节点的短路连接，并由放大后的 \texttt{effective\_ratio} 控制实际强度。因此，该设置比均匀随机翻边更接近真实图中的结构噪声和异常连接。
+
+    结构扰动直接改变消息传递路径和局部密度估计，因此对 DMC-GGAD 的影响更复杂。若扰动破坏高密度社区内部连接，注意力聚合路径会受到影响；若新增短路连接把 hub 与低度节点强行拉近，密度划分和候选池采样也会发生偏移。实验结果显示模型仍能在一定扰动范围内维持稳定，但结构攻击强度升高后性能更容易下降，说明真实部署中仍需要额外的结构防御或图清洗机制。
+
+    \subsubsection{标签污染鲁棒性}
+    标签污染实验通过翻转训练/验证阶段可见标签来破坏监督信号，并同样使用有效比例放大机制控制实际污染强度。这类扰动会直接影响已知正常节点集合的纯度，从而削弱静态 REC 权重、伪异常锚点选择和训练集先验校准。
+
+    从结果看，轻度污染下曲线可能保持平稳或出现小幅波动，但这不应被解释为标签污染有益，而应理解为半监督训练、伪异常合成和分数融合共同带来的有限容忍度。当污染比例继续升高时，监督信号被系统性破坏，性能退化是预期结果。综合三类实验，DMC-GGAD 的鲁棒性主要来自密度感知生成、REC 微环境约束和 TAF-QA 分数校准的协同，但这种鲁棒性是有边界的。
+
+    % ================= 结论 =================
+    \section{结论}
+    本文围绕半监督图异常检测中的伪异常质量问题，提出了 DMC-GGAD。该方法从拓扑均匀假设失效这一根本缺口出发，通过密度感知伪异常合成和微环境伪装校准共同约束伪异常与真实异常之间的一致性。具体而言，模型利用局部密度控制生成路径，利用 REC 约束刻画正常微环境的靠近与排斥关系，并在推理阶段借助 TAF-QA 对神经判别分数与训练集图先验分数进行无监督质量融合，从而在不引入验证泄漏的前提下校准最终排序。实验结果表明，DMC-GGAD 在多个数据集上取得了稳定且具有竞争力的 AUROC 和 AP 表现，说明围绕伪异常质量建立统一叙事具有实际价值。未来工作将进一步面向更复杂的动态图和跨域图场景，研究更稳健的伪异常分布校准机制。
+
+    % ================= 参考文献 =================
+    \bibliographystyle{IEEEtran}
+    \bibliography{references}
+
+    % ================= 附录 =================
+    \clearpage
+    \appendices
+    \FloatBarrier
+    \section{数据集详细描述与统计分析}
+    \label{app:dataset_details}
+
+    本节补充说明实验数据集的规模、属性维度和异常比例。除特别说明外，所有数据集均采用公开图异常检测基准中的标准划分与标签定义；DBLP 使用 OAM-CARD 版本，该版本包含 5,484 个节点、18,124 条边、6,775 维属性和 273 个异常节点。表~\ref{tab:appendix_dataset_stats} 汇总了各数据集统计信息。
+
+    \begin{table}[htbp]
+    \centering
+    \caption{实验数据集统计信息。}
+    \label{tab:appendix_dataset_stats}
+    \small
+    \resizebox{0.92\textwidth}{!}{%
+    \begin{tabular}{l|l|r|r|r|r|r}
+    \hline
+    \textbf{Dataset} & \textbf{Type} & $\mathbf{|V|}$ & $\mathbf{|E|}$ & \textbf{Attributes} & \textbf{Anomalies} & \textbf{Rate} \\
+    \hline
+    ACM & Citation network & 16,484 & 82,175 & 8,337 & 597 & 3.62\% \\
+    Citeseer & Citation network & 3,327 & 5,137 & 3,703 & 150 & 4.51\% \\
+    Cora & Citation network & 2,708 & 5,803 & 1,433 & 150 & 5.54\% \\
+    DBLP & Citation network & 5,484 & 18,124 & 6,775 & 273 & 4.98\% \\
+    
+    Facebook & Social network & 1,081 & 27,552 & 576 & 25 & 2.31\% \\
+    Flickr & Social network & 7,575 & 241,304 & 12,047 & 450 & 5.94\% \\
+    Photo & Content co-purchase network & 7,535 & 119,081 & 745 & 698 & 9.26\% \\
+    Pubmed & Citation network & 19,717 & 46,423 & 500 & 600 & 3.04\% \\
+    Tolokers & Social network & 11,758 & 519,000 & 10 & 2,566 & 21.82\% \\
+    Weibo & Social network & 8,405 & 377,271 & 400 & 868 & 10.33\% \\
+    \hline
+    \end{tabular}%
+    }
+    \end{table}
+
+    \begin{figure}[htbp]
+        \centering
+        \includegraphics[width=0.88\linewidth]{dataset_analysis/dataset_scale.png}
+        \caption{各数据集节点数与边数规模对比。纵轴采用对数尺度，以同时展示小规模社交图和较大规模金融图。}
+        \label{fig:dataset_scale}
+    \end{figure}
+
+    \begin{figure}[htbp]
+        \centering
+        \begin{subfigure}{0.48\linewidth}
+            \centering
+            \includegraphics[width=0.98\linewidth]{dataset_analysis/dataset_topology_anomaly.png}
+            \caption{平均度与异常比例}
+            \label{fig:dataset_topology_anomaly}
+        \end{subfigure}
+        \hfill
+        \begin{subfigure}{0.48\linewidth}
+            \centering
+            \includegraphics[width=0.98\linewidth]{dataset_analysis/dataset_feature_profile.png}
+            \caption{属性维度与特征稀疏率}
+            \label{fig:dataset_feature_profile}
+        \end{subfigure}
+        \caption{数据集拓扑、异常比例和属性特征分布分析。}
+        \label{fig:dataset_profile}
+    \end{figure}
+
+    从图~\ref{fig:dataset_scale} 和图~\ref{fig:dataset_profile} 可以看到，实验数据覆盖了多种图结构：Facebook 和 Flickr 具有较高平均度，适合检验模型在社交网络稠密局部结构中的稳定性；Cora、Citeseer 和 DBLP 边相对稀疏但文本属性维度较高，能够检验高维属性噪声下的判别能力；Pubmed 和 Weibo 节点规模较大且属性维度适中，Tolokers 边极为稠密且异常比例最高，为评估模型在异构场景下的泛化能力提供了互补测试环境。上述差异为评估 DMC-GGAD 的跨域泛化能力提供了互补测试环境。
+
+    \subsection{数据集逐项说明}
+
+    ACM, Cora, Citeseer 和 DBLP 均为引文或学术网络数据集，节点通常表示论文或作者，边表示引用、共现或由元路径构造的学术关系，节点属性主要来自文本词袋或主题特征，异常标签由基准数据文件给出。其中 DBLP 使用 OAM-CARD 版本，节点数、边数、属性维度和异常比例与表~\ref{tab:appendix_dataset_stats} 保持一致。
+
+    Facebook 和 Flickr 为社交网络或内容社交网络数据集，节点表示用户或内容实体，边表示社交连接、关注或内容关联，节点属性由用户画像、标签或内容特征构成。异常节点由公开图异常检测基准中的标签定义。
+
+    Photo 为内容电商网络，节点表示商品，边表示共购或内容关联关系，节点属性描述商品文本或类别信息。该数据集同时具有较高边密度和较高异常比例，可用于检验模型在内容社区图上的表现。
+
+    Pubmed 为引文网络数据集，节点表示生物医学论文，边表示引用关系，节点属性为 TF-IDF 词袋特征。该数据集规模较大，属性维度较低但特征较为稠密，适合检验模型在大规模稀疏引文图上的可扩展性。
+
+    Tolokers 为社交平台众包工人网络，节点表示众包工人，边表示工人之间的共同任务关系，节点属性为工人的任务行为统计特征（共10维）。该数据集边极为稠密且异常比例最高（21.82\%），可用于检验模型在高度连接且异常密集的社交图中的判别鲁棒性。
+
+    Weibo 为社交媒体网络，节点表示微博用户，边表示用户之间的关注关系，节点属性为用户行为特征。该数据集兼具较大规模与较高异常比例，适合评估模型在在线社交网络上的泛化性能。
+
+    \FloatBarrier
+    \section{对照方法补充说明}
+    \label{app:method_sources}
+
+    为便于理解实验对比范围，表~\ref{tab:method_sources} 给出各对照方法的技术类别、核心思想及其与本文方法的主要差异。TAM 指 Truncated Affinity Maximization~\cite{ref4}。
+
+    \begin{table*}[htbp]
+    \centering
+    \caption{对照方法类别、核心思想与比较重点。}
+    \label{tab:method_sources}
+    \small
+    \resizebox{0.92\textwidth}{!}{%
+    \begin{tabular}{l|l|p{5.4cm}|p{5.4cm}}
+    \hline
+    \textbf{Method} & \textbf{Category} & \textbf{Core idea} & \textbf{Comparison focus} \\
+    \hline
+    DOMINANT & Reconstruction & GCN autoencoder with structure/attribute reconstruction error. & Tests reconstruction-based anomaly scoring. \\
+    AnomalyDAE & Reconstruction & Dual autoencoders for attributed graph structure and attributes. & Tests attribute-structure reconstruction under graph noise. \\
+    AEGIS & Generative adversarial & Autoencoding and adversarial generation for anomaly-sensitive representations. & Compares adversarial representation learning without topology-adaptive pseudo anomaly quality control. \\
+    GAAN & Generative adversarial & GAN-style generator and discriminator for attributed networks. & Compares adversarial generation under unsupervised attributed-network settings. \\
+    OCGNN & One-class classification & One-class hypersphere objective over GNN representations. & Compares compact normal-boundary learning without synthetic anomaly generation. \\
+    GGAD & Semi-supervised generative & Generates pseudo anomalies from labeled normal nodes for semi-supervised GAD. & Closest semi-supervised generative baseline; differs in topology-adaptive generation and quality-aware fusion. \\
+    TAM & One-class homophily modeling & Truncated affinity maximization for one-class homophily modeling. & Compares normal homophily modeling without density-aware synthesis. \\
+    CoLA & Contrastive learning & Contrastive self-supervised learning on attributed networks. & Compares contrastive local-consistency learning without explicit pseudo anomaly construction. \\
+    RHO & Higher-order structure regularization & Robust graph representation learning with higher-order structural signals. & Compares high-order structural regularization. \\
+    DMC-GGAD & Proposed method & Density-aware pseudo anomaly generation with micro-environment camouflage regularization. & This work. \\
+    \hline
+    \end{tabular}%
+    }
+    \end{table*}
+
+
+
+
+
+    \FloatBarrier
+    \section{生成伪异常节点的 MMD 定量分析}
+    \label{app:mmd_analysis}
+
+    为进一步定量评估 DMC-GGAD 生成的伪异常节点分布，本文参考 GGAD 附录中的生成样本分析方式，在多个数据集上计算生成伪异常嵌入与真实异常/真实正常节点嵌入之间的 Maximum Mean Discrepancy (MMD) 距离，并加入随机噪声伪样本作为对照。MMD 值越小表示两组样本分布越接近。表~\ref{tab:mmd_generated} 作为生成样本分布的补充诊断指标，用于观察伪异常是否具有贴近正常流形的伪装特征以及相对于随机噪声是否更接近真实图分布。
+
+    \begin{table*}[htbp]
+    \centering
+    \caption{生成伪异常节点的 MMD 距离分析。}
+    \label{tab:mmd_generated}
+    \small
+    \resizebox{0.92\textwidth}{!}{%
+    \begin{tabular}{l|rrrrrrrrrr}
+    \hline
+    \textbf{Metric} & \textbf{Facebook} & \textbf{Cora} & \textbf{Photo} & \textbf{ACM} & \textbf{Citeseer} & \textbf{DBLP} & \textbf{Flickr} & \textbf{Tolokers} & \textbf{Weibo} & \textbf{Pubmed} \\
+    \hline
+    MMD(DMC-GGAD$\rightarrow$abnormal) & 0.156559 & 0.022409 & 0.104725 & 0.089640 & 0.036123 & 0.141311 & 0.100722 & 0.138445 & 0.412814 & 0.076532 \\
+    MMD(Random Noise$\rightarrow$abnormal) & 0.950702 & 0.742874 & 0.793887 & 0.588448 & 0.776913 & 0.844683 & 0.856424 & 0.383079 & 0.706116 & 0.477869 \\
+    MMD(DMC-GGAD$\rightarrow$normal) & 0.077502 & 0.028407 & 0.067422 & 0.100631 & 0.077986 & 0.045351 & 0.277336 & 0.162008 & 0.015332 & 0.058952 \\
+    MMD(Random Noise$\rightarrow$normal) & 0.582121 & 0.593067 & 0.496944 & 0.602002 & 0.551473 & 0.730324 & 0.669328 & 0.262862 & 0.081547 & 0.509913 \\
+    R(DMC-GGAD$\rightarrow$abnormal) & 143.639828 & 11.430077 & 202.507841 & 48.295019 & 0.942730 & 8.121593 & 47.088812 & 77.366765 & 1102.465542 & 144.885770 \\
+    R(Random Noise$\rightarrow$abnormal) & 872.251649 & 378.915616 & 1535.149659 & 317.034676 & 20.275882 & 48.546575 & 400.388531 & 214.075348 & 1885.760207 & 904.667482 \\
+    R(DMC-GGAD$\rightarrow$normal) & 71.106205 & 14.489711 & 130.374842 & 54.216278 & 2.035286 & 2.606475 & 129.657840 & 90.534768 & 40.944784 & 111.603620 \\
+    R(Random Noise$\rightarrow$normal) & 534.085278 & 302.504142 & 960.947128 & 324.337109 & 14.392361 & 41.973996 & 312.918701 & 146.894789 & 217.779284 & 965.331082 \\
+    Baseline: Normal vs Abnormal & 0.149694 & 0.017303 & 0.124724 & 0.211192 & 0.036309 & 0.147736 & 0.119956 & 0.084543 & 0.467619 & 0.005583 \\
+    Baseline: Train Normal vs Test Normal & 0.001090 & 0.001961 & 0.000517 & 0.001856 & 0.038317 & 0.017399 & 0.002139 & 0.001789 & 0.000374 & 0.000528 \\
+    \hline
+    \end{tabular}
+    }
+    \end{table*}
+
+    其中 $R$ 表示相对于 ``Train Normal vs Test Normal'' 自然划分基线的比值，用于衡量生成分布偏移相对于正常类内波动的大小。该比值越低，说明生成样本越接近对应参考分布；但当 $R$ 在部分数据集上仍处于较高量级时，应理解为仍存在流形偏移，而非生成分布已经完全匹配真实分布。Citeseer 上 $R(\mathrm{DMC\mbox{-}GGAD}\rightarrow\mathrm{abnormal})<1$ 表明生成伪异常比正常类内自然划分更接近真实异常分布，这是强诊断信号，但也提示生成器存在过度贴近异常分布的风险，因此本文仅将其作为生成机制有效性的补充证据，而不将其作为主结论。
+
+    \FloatBarrier
+    \section{计算复杂度补充说明}
+    \label{app:complexity}
+
+    GGAD 的原始附录将局部亲和力计算写作 $O(N^2d)$，因为其需要构造全局节点相似度矩阵。DMC-GGAD 避免构造这一稠密矩阵，并通过稀疏边集上的局部聚合完成亲和力估计。若 $N=|\mathcal{V}|$、$M=|\mathcal{E}|$、$d$ 为嵌入维度、$L$ 为 GNN 层数、$S$ 为每轮伪异常采样规模，则主要计算开销包括：GNN 稀疏消息传递 $O(LMd)$，候选池采样与密度感知生成约为 $O(Sd + S|\mathcal{C}|d)$，边级亲和力计算为 $O(Md)$，分类器和损失计算为 $O(Nd + Sd)$。因此，总体复杂度可近似写为：
+    \begin{equation}
+        O(LMd + S|\mathcal{C}|d + Md + Nd + Sd),
+    \end{equation}
+    其中候选池大小 $|\mathcal{C}|$ 在实验中由固定采样上界控制。与需要显式构建 $N \times N$ 相似度矩阵的方法相比，DMC-GGAD 的亲和力计算从 $O(N^2d)$ 降低到 $O(Md)$，更适合稀疏或中等规模真实图。
+
+    \subsection{运行时间分析}
+
+    为补充计算效率分析，表~\ref{tab:runtime_comparison} 汇总了不同方法在相同实验环境下的代表性总运行时间（秒）。若某一方法无法在对应数据集上稳定完成，或其运行时间不可可靠统计，则以 ``--'' 标记。
+
+    \begin{table*}[htbp]
+    \centering
+    \caption{不同方法在十个数据集上的运行时间对比（秒）。``--'' 表示该方法无法稳定完成或运行时间不可可靠统计。}
+    \label{tab:runtime_comparison}
+    \small
+    \resizebox{\textwidth}{!}{%
+    \begin{tabular}{l|rrrrrrrrrr}
+    \hline
+    \textbf{Method} & \textbf{ACM} & \textbf{Citeseer} & \textbf{Cora} & \textbf{DBLP} & \textbf{Facebook} & \textbf{Flickr} & \textbf{Photo} & \textbf{Pubmed} & \textbf{Tolokers} & \textbf{Weibo} \\
+    \hline
+    DOMINANT & 720.4 & 245.3 & 201.2 & 648.0 & 378.1 & 1542.3 & 1816.4 & 2167.3 & 6677.3 & 2863.5 \\
+    AnomalyDAE & -- & 264.3 & 195.7 & 1607.5 & 376.4 & -- & 1696.9 & 1914.4 & 6502.0 & 3711.6 \\
+    OCGNN & 1219.5 & 44.7 & 25.9 & 23.7 & 75.6 & 342.1 & 143.3 & 167.4 & 411.8 & 162.5 \\
+    AEGIS & 261.8 & 133.5 & 51.5 & 255.7 & 8.6 & 81.0 & 370.1 & 327.4 & 1189.6 & 1185.7 \\
+    GAAN & 4760.2 & 333.7 & 237.4 & 264.3 & 286.7 & 3201.6 & 1593.6 & 1518.2 & 5482.1 & 2438.0 \\
+    TAM & 115.6 & 28.5 & 22.6 & 57.1 & 85.3 & 21.2 & 338.3 & 199.0 & 276.5 & 46.5 \\
+    GGAD & 1446.3 & 53.8 & 18.6 & 33.5 & 64.4 & 108.2 & 285.7 & 4261.0 & 440.9 & 44.1 \\
+    CoLA & 137.5 & 143.3 & 51.2 & 182.9 & 85.1 & 67.2 & 469.4 & 349.4 & 53.0 & 27.5 \\
+    RHO & 841.1 & 65.7 & 35.0 & 184.4 & 18.6 & 133.0 & 66.3 & 311.8 & 703.3 & -- \\
+    DMC-GGAD & 136.5 & 27.1 & 29.9 & 20.5 & 21.6 & 97.3 & 191.3 & 101.6 & 132.6 & 49.1 \\
+    \hline
+    \end{tabular}%
+    }
+    \end{table*}
+
+    \FloatBarrier
+    \section{超参数敏感性实验}
+    \label{app:sensitivity}
+
+    本节保留伪造异常比例、密度划分阈值和 REC 密度联合权重的全量敏感性曲线。每个参数均同时给出 AUROC 与 AP，并按高均值组和低均值组拆分展示。
+
+    \begin{figure}[htbp]
+        \centering
+        \begin{subfigure}{0.38\linewidth}
+            \centering
+            \includegraphics[width=0.90\linewidth]{sensitivity/fake_ratio_auc_high.png}
+            \caption{AUC，高均值组}
+        \end{subfigure}
+        \hfill
+        \begin{subfigure}{0.38\linewidth}
+            \centering
+            \includegraphics[width=0.90\linewidth]{sensitivity/fake_ratio_auc_low.png}
+            \caption{AUC，低均值组}
+        \end{subfigure}
+
+        \vspace{4pt}
+
+        \begin{subfigure}{0.38\linewidth}
+            \centering
+            \includegraphics[width=0.90\linewidth]{sensitivity/fake_ratio_ap_high.png}
+            \caption{AP，高均值组}
+        \end{subfigure}
+        \hfill
+        \begin{subfigure}{0.38\linewidth}
+            \centering
+            \includegraphics[width=0.90\linewidth]{sensitivity/fake_ratio_ap_low.png}
+            \caption{AP，低均值组}
+        \end{subfigure}
+        \caption{伪造异常比例敏感性曲线：AUC 与 AP 的高均值组、低均值组对照。}
+        \label{fig:sensitivity_fake_ratio_appendix}
+    \end{figure}
+
+    \begin{figure}[htbp]
+        \centering
+        \begin{subfigure}{0.38\linewidth}
+            \centering
+            \includegraphics[width=0.90\linewidth]{sensitivity/density_threshold_auc_high.png}
+            \caption{AUC，高均值组}
+        \end{subfigure}
+        \hfill
+        \begin{subfigure}{0.38\linewidth}
+            \centering
+            \includegraphics[width=0.90\linewidth]{sensitivity/density_threshold_auc_low.png}
+            \caption{AUC，低均值组}
+        \end{subfigure}
+
+        \vspace{4pt}
+
+        \begin{subfigure}{0.38\linewidth}
+            \centering
+            \includegraphics[width=0.90\linewidth]{sensitivity/density_threshold_ap_high.png}
+            \caption{AP，高均值组}
+        \end{subfigure}
+        \hfill
+        \begin{subfigure}{0.38\linewidth}
+            \centering
+            \includegraphics[width=0.90\linewidth]{sensitivity/density_threshold_ap_low.png}
+            \caption{AP，低均值组}
+        \end{subfigure}
+        \caption{密度划分阈值敏感性曲线：AUC 与 AP 的高均值组、低均值组对照。}
+        \label{fig:sensitivity_density_threshold_appendix}
+    \end{figure}
+
+    \begin{figure}[htbp]
+        \centering
+        \begin{subfigure}{0.38\linewidth}
+            \centering
+            \includegraphics[width=0.90\linewidth]{sensitivity/rec_density_auc_high.png}
+            \caption{AUC，高均值组}
+        \end{subfigure}
+        \hfill
+        \begin{subfigure}{0.38\linewidth}
+            \centering
+            \includegraphics[width=0.90\linewidth]{sensitivity/rec_density_auc_low.png}
+            \caption{AUC，低均值组}
+        \end{subfigure}
+
+        \vspace{4pt}
+
+        \begin{subfigure}{0.38\linewidth}
+            \centering
+            \includegraphics[width=0.90\linewidth]{sensitivity/rec_density_ap_high.png}
+            \caption{AP，高均值组}
+        \end{subfigure}
+        \hfill
+        \begin{subfigure}{0.38\linewidth}
+            \centering
+            \includegraphics[width=0.90\linewidth]{sensitivity/rec_density_ap_low.png}
+            \caption{AP，低均值组}
+        \end{subfigure}
+        \caption{REC 密度联合权重敏感性曲线：AUC 与 AP 的高均值组、低均值组对照。}
+        \label{fig:sensitivity_rec_density_appendix}
+    \end{figure}
+
+    \FloatBarrier
+    \section{训练损失收敛曲线}
+    \label{app:convergence}
+
+    本节给出 10 个数据集上的平滑训练损失曲线，用于补充正文中的收敛稳定性结论。
+
+    \begin{figure}[htbp]
+        \centering
+        \begin{subfigure}{0.45\linewidth}
+            \centering
+            \includegraphics[width=0.95\linewidth]{loss_curves/acm_loss_smooth_seed123.png}
+            \caption{ACM}
+        \end{subfigure}
+        \hfill
+        \begin{subfigure}{0.45\linewidth}
+            \centering
+            \includegraphics[width=0.95\linewidth]{loss_curves/citeseer_loss_smooth_seed123.png}
+            \caption{Citeseer}
+        \end{subfigure}
+
+        \vspace{6pt}
+
+        \begin{subfigure}{0.45\linewidth}
+            \centering
+            \includegraphics[width=0.95\linewidth]{loss_curves/cora_loss_smooth_seed123.png}
+            \caption{Cora}
+        \end{subfigure}
+        \hfill
+        \begin{subfigure}{0.45\linewidth}
+            \centering
+            \includegraphics[width=0.95\linewidth]{loss_curves/dblp_loss_smooth_seed123.png}
+            \caption{DBLP}
+        \end{subfigure}
+        \caption{训练损失收敛曲线（一）：ACM、Citeseer、Cora 和 DBLP。}
+        \label{fig:convergence_appendix_1}
+    \end{figure}
+
+    \begin{figure}[htbp]
+        \centering
+        \begin{subfigure}{0.45\linewidth}
+            \centering
+            \includegraphics[width=0.95\linewidth]{loss_curves/facebook_loss_smooth_seed123.png}
+            \caption{Facebook}
+        \end{subfigure}
+        \hfill
+        \begin{subfigure}{0.45\linewidth}
+            \centering
+            \includegraphics[width=0.95\linewidth]{loss_curves/flickr_loss_smooth_seed123.png}
+            \caption{Flickr}
+        \end{subfigure}
+
+        \vspace{6pt}
+
+        \begin{subfigure}{0.45\linewidth}
+            \centering
+            \includegraphics[width=0.95\linewidth]{loss_curves/photo_loss_smooth_seed123.png}
+            \caption{Photo}
+        \end{subfigure}
+        \hfill
+        \begin{subfigure}{0.45\linewidth}
+            \centering
+            \includegraphics[width=0.95\linewidth]{loss_curves/pubmed_loss_smooth_seed123.png}
+            \caption{Pubmed}
+        \end{subfigure}
+        \caption{训练损失收敛曲线（二）：Facebook、Flickr、Photo 和 Pubmed。}
+        \label{fig:convergence_appendix_2}
+    \end{figure}
+
+    \begin{figure}[htbp]
+        \centering
+        \begin{subfigure}{0.45\linewidth}
+            \centering
+            \includegraphics[width=0.95\linewidth]{loss_curves/weibo_loss_smooth_seed123.png}
+            \caption{Weibo}
+        \end{subfigure}
+        \hfill
+        \begin{subfigure}{0.45\linewidth}
+            \centering
+            \includegraphics[width=0.95\linewidth]{loss_curves/tolokers_loss_smooth_seed123.png}
+            \caption{Tolokers}
+        \end{subfigure}
+        \caption{训练损失收敛曲线（三）：Weibo 和 Tolokers。}
+        \label{fig:convergence_appendix_3}
+    \end{figure}
+
+    \FloatBarrier
+    \section{鲁棒性实验}
+    \label{app:robustness}
+
+    本节保留特征噪声、结构扰动和标签污染三类鲁棒性实验的全量 AUROC/AP 曲线。
+
+    \begin{figure}[htbp]
+        \centering
+        \begin{subfigure}{0.38\linewidth}
+            \centering
+            \includegraphics[width=0.90\linewidth]{robustness/feature_auc_1_5.png}
+            \caption{AUC，数据集 1--5}
+        \end{subfigure}
+        \hfill
+        \begin{subfigure}{0.38\linewidth}
+            \centering
+            \includegraphics[width=0.90\linewidth]{robustness/feature_auc_6_10.png}
+            \caption{AUC，数据集 6--10}
+        \end{subfigure}
+
+        \vspace{4pt}
+
+        \begin{subfigure}{0.38\linewidth}
+            \centering
+            \includegraphics[width=0.90\linewidth]{robustness/feature_ap_1_5.png}
+            \caption{AP，数据集 1--5}
+        \end{subfigure}
+        \hfill
+        \begin{subfigure}{0.38\linewidth}
+            \centering
+            \includegraphics[width=0.90\linewidth]{robustness/feature_ap_6_10.png}
+            \caption{AP，数据集 6--10}
+        \end{subfigure}
+        \caption{特征噪声鲁棒性曲线：AUC 与 AP 的数据集 1--5、6--10 对照。}
+        \label{fig:robustness_feature_appendix}
+    \end{figure}
+
+    \begin{figure}[htbp]
+        \centering
+        \begin{subfigure}{0.38\linewidth}
+            \centering
+            \includegraphics[width=0.90\linewidth]{robustness/struct_auc_1_5.png}
+            \caption{AUC，数据集 1--5}
+        \end{subfigure}
+        \hfill
+        \begin{subfigure}{0.38\linewidth}
+            \centering
+            \includegraphics[width=0.90\linewidth]{robustness/struct_auc_6_10.png}
+            \caption{AUC，数据集 6--10}
+        \end{subfigure}
+
+        \vspace{4pt}
+
+        \begin{subfigure}{0.38\linewidth}
+            \centering
+            \includegraphics[width=0.90\linewidth]{robustness/struct_ap_1_5.png}
+            \caption{AP，数据集 1--5}
+        \end{subfigure}
+        \hfill
+        \begin{subfigure}{0.38\linewidth}
+            \centering
+            \includegraphics[width=0.90\linewidth]{robustness/struct_ap_6_10.png}
+            \caption{AP，数据集 6--10}
+        \end{subfigure}
+        \caption{结构扰动鲁棒性曲线：AUC 与 AP 的数据集 1--5、6--10 对照。}
+        \label{fig:robustness_struct_appendix}
+    \end{figure}
+
+    \begin{figure}[htbp]
+        \centering
+        \begin{subfigure}{0.38\linewidth}
+            \centering
+            \includegraphics[width=0.90\linewidth]{robustness/label_auc_1_5.png}
+            \caption{AUC，数据集 1--5}
+        \end{subfigure}
+        \hfill
+        \begin{subfigure}{0.38\linewidth}
+            \centering
+            \includegraphics[width=0.90\linewidth]{robustness/label_auc_6_10.png}
+            \caption{AUC，数据集 6--10}
+        \end{subfigure}
+
+        \vspace{4pt}
+
+        \begin{subfigure}{0.38\linewidth}
+            \centering
+            \includegraphics[width=0.90\linewidth]{robustness/label_ap_1_5.png}
+            \caption{AP，数据集 1--5}
+        \end{subfigure}
+        \hfill
+        \begin{subfigure}{0.38\linewidth}
+            \centering
+            \includegraphics[width=0.90\linewidth]{robustness/label_ap_6_10.png}
+            \caption{AP，数据集 6--10}
+        \end{subfigure}
+        \caption{标签污染鲁棒性曲线：AUC 与 AP 的数据集 1--5、6--10 对照。}
+        \label{fig:robustness_label_appendix}
+    \end{figure}
+
+    \FloatBarrier
+    \section{t-SNE 特征可视化}
+    \label{app:tsne}
+
+    本节保留 10 个数据集的原始特征、DMC-GGAD 嵌入和 GGAD 嵌入组合对照图。
+
+    \begin{figure}[htbp]
+        \centering
+        \begin{subfigure}{0.48\linewidth}
+            \centering
+            \includegraphics[width=0.98\linewidth]{t-SNE/acm_seed123_raw_dmcggad_ggad.png}
+            \caption{ACM}
+        \end{subfigure}
+        \hfill
+        \begin{subfigure}{0.48\linewidth}
+            \centering
+            \includegraphics[width=0.98\linewidth]{t-SNE/citeseer_seed123_raw_dmcggad_ggad.png}
+            \caption{Citeseer}
+        \end{subfigure}
+
+        \vspace{4pt}
+
+        \begin{subfigure}{0.48\linewidth}
+            \centering
+            \includegraphics[width=0.98\linewidth]{t-SNE/cora_seed123_raw_dmcggad_ggad.png}
+            \caption{Cora}
+        \end{subfigure}
+        \hfill
+        \begin{subfigure}{0.48\linewidth}
+            \centering
+            \includegraphics[width=0.98\linewidth]{t-SNE/dblp_seed123_raw_dmcggad_ggad.png}
+            \caption{DBLP}
+        \end{subfigure}
+
+        \vspace{4pt}
+
+        \begin{subfigure}{0.48\linewidth}
+            \centering
+            \includegraphics[width=0.98\linewidth]{t-SNE/facebook_seed123_raw_dmcggad_ggad.png}
+            \caption{Facebook}
+        \end{subfigure}
+        \hfill
+        \begin{subfigure}{0.48\linewidth}
+            \centering
+            \includegraphics[width=0.98\linewidth]{t-SNE/flickr_seed123_raw_dmcggad_ggad.png}
+            \caption{Flickr}
+        \end{subfigure}
+
+        \vspace{4pt}
+
+        \begin{subfigure}{0.48\linewidth}
+            \centering
+            \includegraphics[width=0.98\linewidth]{t-SNE/photo_seed123_raw_dmcggad_ggad.png}
+            \caption{Photo}
+        \end{subfigure}
+        \hfill
+        \begin{subfigure}{0.48\linewidth}
+            \centering
+            \includegraphics[width=0.98\linewidth]{t-SNE/pubmed_seed123_raw_dmcggad_ggad.png}
+            \caption{Pubmed}
+        \end{subfigure}
+
+        \vspace{4pt}
+
+        \begin{subfigure}{0.48\linewidth}
+            \centering
+            \includegraphics[width=0.98\linewidth]{t-SNE/tolokers_seed123_raw_dmcggad_ggad.png}
+            \caption{Tolokers}
+        \end{subfigure}
+        \hfill
+        \begin{subfigure}{0.48\linewidth}
+            \centering
+            \includegraphics[width=0.98\linewidth]{t-SNE/weibo_seed123_raw_dmcggad_ggad.png}
+            \caption{Weibo}
+        \end{subfigure}
+        \caption{10 个数据集的原始特征、DMC-GGAD 嵌入和 GGAD 嵌入 t-SNE 对照图。}
+        \label{fig:tsne_appendix}
+    \end{figure}
+
+    \FloatBarrier
+    \section{DMC-GGAD 训练伪代码}
+    \label{app:pseudocode}
+
+    本节给出 DMC-GGAD 的训练伪代码。算法~\ref{alg:dmc_ggad_training} 概括整体训练流程：先基于原始特征和已知正常节点预计算静态 REC 权重，再在每个 epoch 中执行 GCN 编码、密度感知伪异常生成、三项损失联合优化、训练集先验构造和最终分数融合。算法~\ref{alg:sparse_affinity} 展示用于替代稠密相似度矩阵的稀疏边级亲和力计算。
+
+    \begin{algorithm}[htbp]
+    \caption{DMC-GGAD}
+    \label{alg:dmc_ggad_training}
+    \footnotesize
+    \begin{algorithmic}[1]
+    \REQUIRE Graph $\mathcal{G}=(\mathcal{V},\mathcal{E},\mathbf{X})$; labeled normal nodes $\mathcal{V}_l$; test nodes $\mathcal{V}_{test}$; GNN layers $L$; epochs $E$; generated outlier number $S$; hop number $K$; global sample rate $\eta$.
+    \ENSURE Anomaly scores $\{s_v\mid v\in\mathcal{V}_{test}\}$.
+    \STATE Initialize encoder parameters $\Theta_e$, generator parameters $\Theta_g$, and classifier parameters $\Theta_s$.
+    \STATE Build a sparse edge representation from $\mathcal{E}$ for affinity computation.
+    \STATE Select pure edges $\mathcal{E}_{pure}=\{(u,v)\in\mathcal{E}\mid u\in\mathcal{V}_l, v\in\mathcal{V}_l\}$.
+    \STATE Compute edge-wise cosine similarities on raw features $\mathbf{X}$ over $\mathcal{E}_{pure}$ in mini-batches.
+    \STATE Aggregate incident pure-edge similarities and obtain local homophily $H(v_i)$ for each $v_i\in\mathcal{V}_l$.
+    \STATE Normalize $H(v_i)$ by Z-score and \texttt{tanh}; fuse it with the feature-dimension-aware global REC base to obtain node-specific weights $r_i$.
+    \STATE Build fixed train-only prior scores $s_v^{\mathrm{prior}}$ from graph/attribute statistics and labeled normal nodes.
+    \FOR{$epoch=1,\ldots,E$}
+        \STATE Encode all nodes by stacked GCN layers: $\mathbf{H}=f_{\Theta_e}(\mathbf{X},\mathcal{E})$.
+        \STATE Sample anchor/initial outlier indices from the training split according to the current labeled-normal setting.
+        \FOR{each sampled anchor $v_i$}
+            \STATE Estimate local density $\rho_i=|\mathcal{N}(v_i)|/(\bar{d}+\epsilon)$ from the observed neighborhood.
+            \STATE Build candidate pool $\mathcal{C}_i=\mathrm{Sample}(\mathcal{N}^{K}(v_i))\cup\mathrm{Sample}_{\eta}(\mathcal{V})$.
+            \IF{$\rho_i>1$}
+                \STATE Generate $\hat{\mathbf{h}}_i$ by feature-driven attention aggregation over $\mathcal{C}_i$ with Gaussian perturbation.
+            \ELSE
+                \STATE Generate $\hat{\mathbf{h}}_i$ by random latent feature mixing over sampled candidates.
+            \ENDIF
+        \ENDFOR
+        \STATE Concatenate labeled normal embeddings and generated outlier embeddings.
+        \STATE Predict logits with the MLP classifier and compute $\mathcal{L}_{bce}$.
+        \STATE Compute sparse local affinity margin loss $\mathcal{L}_{margin}$ by Algorithm~\ref{alg:sparse_affinity}.
+        \STATE Compute raw distances between generated outliers and noisy anchor embeddings.
+        \STATE Obtain anchor REC weights from the precomputed node-level prior and compute
+        \STATE \quad $\mathcal{L}_{rec}=\mathrm{mean}(r_i^+\Delta_i)+\mathrm{mean}(|r_i^-|/(\Delta_i+\epsilon))$.
+        \STATE Optimize $\mathcal{L}=\lambda_1\mathcal{L}_{margin}+\lambda_2\mathcal{L}_{bce}+\lambda_{scale}\mathcal{L}_{rec}$ by back-propagation.
+        \STATE Compute current classifier scores $s_{v,epoch}^{\mathrm{clf}}=D_{\Theta_s}(f_{\Theta_e}(\mathbf{x}_v,\mathcal{E}))$.
+        \STATE Retrieve fixed prior scores $s_v^{\mathrm{prior}}$ and estimate $\mathcal{Q}_{m}^{epoch}$ and $\mathcal{Q}_{p}$ with TAF-QA over the labeled-normal reference domain.
+        \STATE Set $\alpha_{epoch}=\operatorname{clip}(\mathcal{Q}_{m}^{epoch}/(\mathcal{Q}_{m}^{epoch}+\mathcal{Q}_{p}+\epsilon),0.05,0.95)$.
+        \STATE Compute fused scores $s_{v,epoch}=\alpha_{epoch}\mathrm{Norm}(s_{v,epoch}^{\mathrm{clf}})+(1-\alpha_{epoch})\mathrm{Norm}(s_v^{\mathrm{prior}})$.
+        \STATE Evaluate current fused scores and retain the epoch with the best validation performance.
+        \IF{the selected validation criterion has not improved for the patience window}
+            \STATE Stop early.
+        \ENDIF
+    \ENDFOR
+    \RETURN Best fused anomaly scores $\{s_{v,best}\mid v\in\mathcal{V}_{test}\}$ from the selected epoch.
+    \end{algorithmic}
+    \end{algorithm}
+
+    \begin{algorithm}[htbp]
+    \caption{Sparse Local Affinity Computation}
+    \label{alg:sparse_affinity}
+    \begin{algorithmic}[1]
+    \REQUIRE Node embeddings $\mathbf{H}$; edge endpoints $\mathbf{r}$ and $\mathbf{c}$; normal nodes $\mathcal{V}_l$; generated outlier indices $\mathcal{V}_o$; batch size $B$; maximum sampled edges $M_s$.
+    \ENSURE Local affinity margin loss $\mathcal{L}_{margin}$.
+    \STATE Normalize embeddings: $\tilde{\mathbf{h}}_i=\mathbf{h}_i/(\|\mathbf{h}_i\|_2+\epsilon)$.
+    \IF{$|\mathcal{E}|>M_s$}
+        \STATE Randomly sample $M_s$ edge positions and obtain active rows/columns.
+    \ELSE
+        \STATE Use all edge endpoints.
+    \ENDIF
+    \STATE Initialize similarity accumulator $\mathbf{a}\leftarrow\mathbf{0}\in\mathbb{R}^{|\mathcal{V}|}$ and degree counter $\mathbf{d}\leftarrow\mathbf{0}$.
+    \FOR{each edge mini-batch $(\mathbf{r}_b,\mathbf{c}_b)$ with size $B$}
+        \STATE Compute edge similarities $\mathbf{q}_b=\sum_j \tilde{\mathbf{H}}[\mathbf{r}_b,j]\tilde{\mathbf{H}}[\mathbf{c}_b,j]$.
+        \STATE Accumulate $\mathbf{q}_b$ to target nodes $\mathbf{c}_b$ by sparse edge-wise aggregation.
+        \STATE Accumulate degree counts to $\mathbf{c}_b$ by sparse edge-wise aggregation.
+    \ENDFOR
+    \STATE Compute node affinity $\boldsymbol{\tau}=\mathbf{a}/\max(\mathbf{d},\epsilon)$.
+    \STATE $\tau_l=\mathrm{mean}(\boldsymbol{\tau}[\mathcal{V}_l])$, $\tau_o=\mathrm{mean}(\boldsymbol{\tau}[\mathcal{V}_o])$.
+    \STATE $\mathcal{L}_{margin}=\max(0,m-(\tau_l-\tau_o))$.
+    \RETURN $\mathcal{L}_{margin}$.
+    \end{algorithmic}
+    \end{algorithm}
+
+    \end{document}
