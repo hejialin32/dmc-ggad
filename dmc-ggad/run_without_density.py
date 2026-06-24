@@ -230,6 +230,7 @@ args = parser.parse_args()
 
 if not args.prior_list and not args.single_prior:
     args.prior_list = 'graph_normal_distance,residual_centroid_distance'
+args.disable_density = True
 if not getattr(args, 'disable_graph_prior', None):
     args.disable_graph_prior = False
 args.skip_completed = True
@@ -1032,7 +1033,7 @@ def run_experiment(args, seed):
         prior_tag = args.single_prior.replace('neighbor_residual_l2', 'residual_l2').replace('graph_normal_distance', 'graph_norm').replace('residual_centroid_distance', 'res_centroid')
         result_csv_name = f'results_single_prior_{prior_tag}.csv'
     if getattr(args, 'prior_list', None):
-        result_csv_name = f'results.csv'
+        result_csv_name = f'results_without_density.csv'
     if args.skip_completed:
         script_dir = os.path.dirname(os.path.abspath(__file__))
         csv_file = os.path.join(script_dir, result_csv_name)

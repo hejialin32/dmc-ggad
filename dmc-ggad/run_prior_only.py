@@ -230,8 +230,8 @@ args = parser.parse_args()
 
 if not args.prior_list and not args.single_prior:
     args.prior_list = 'graph_normal_distance,residual_centroid_distance'
-if not getattr(args, 'disable_graph_prior', None):
-    args.disable_graph_prior = False
+args.prior_only = True
+args.disable_graph_prior = False
 args.skip_completed = True
 args.dataset = canonical_dataset_name(args.dataset)
 
@@ -1030,9 +1030,9 @@ def run_experiment(args, seed):
         result_csv_name = STRICT_RESULT_CSV_NAME
     if getattr(args, 'single_prior', None):
         prior_tag = args.single_prior.replace('neighbor_residual_l2', 'residual_l2').replace('graph_normal_distance', 'graph_norm').replace('residual_centroid_distance', 'res_centroid')
-        result_csv_name = f'results_single_prior_{prior_tag}.csv'
+        result_csv_name = f'results_prior_only_{prior_tag}.csv'
     if getattr(args, 'prior_list', None):
-        result_csv_name = f'results.csv'
+        result_csv_name = f'results_prior_only.csv'
     if args.skip_completed:
         script_dir = os.path.dirname(os.path.abspath(__file__))
         csv_file = os.path.join(script_dir, result_csv_name)
@@ -1163,6 +1163,8 @@ def run_experiment(args, seed):
             'val_rate': 0.0 if args.strict_3_7 else 0.1,
             'test_rate': round(len(idx_test) / len(ano_label), 5),
             'score_fusion_weight': active_fusion_weight,
+            'best_val_auc': 0.0,
+            'best_val_ap': 0.0,
             'csv_name': result_csv_name,
         }
         append_result_to_csv(summary_data)
