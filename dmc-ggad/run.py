@@ -107,6 +107,8 @@ parser.add_argument('--fusion_weight_table', type=str, default=None,
 
 parser.add_argument('--num_epoch', type=int, default=200, help='')
 parser.add_argument('--patience', type=int, default=100, help='')
+parser.add_argument('--allow_test_metric_selection', action='store_true',
+                    help='Legacy compatibility: select best epoch and early-stop using test AUC. Disabled by default because the strict protocol has no validation/test labels for model selection.')
 parser.add_argument('--skip_best_hyperparams', action='store_true', help='')
 parser.add_argument('--skip_completed', action='store_true',
                     help='Skip completed dataset/seed/mode rows when enabled.')
@@ -139,7 +141,7 @@ parser.add_argument('--prior_list', type=str, default=None,
 
 parser.set_defaults(strict_3_7=False, auto_fusion_weight=True)
 
-SEED_LIST = [123, 456, 789, 2026, 42, 3407]
+SEED_LIST = [0, 1, 3, 5, 42, 123, 456, 789, 3407, 2026]
 DATASET_LIST = ['facebook','cora','photo','acm',
     'citeseer','dblp','flickr','tolokers',
     'weibo','pubmed']
@@ -262,6 +264,8 @@ def get_best_hyperparams(dataset):
         return {'embedding_dim': 256, 'fixed_weight_margin': 0.5, 'global_sample_rate': 0.01}
     elif dataset == 'cora':
         return {'embedding_dim': 128, 'fixed_weight_margin': 1.0, 'global_sample_rate': 0.10}
+    elif dataset == 'dblp':
+        return {'embedding_dim': 512, 'fixed_weight_margin': 0.5, 'global_sample_rate': 0.01}
     elif dataset == 'acm':
         return {'embedding_dim': 512, 'fixed_weight_margin': 2.0, 'global_sample_rate': 0.01}
     elif dataset == 'elliptic':
@@ -279,44 +283,31 @@ def get_best_hyperparams(dataset):
     else:
         return {'embedding_dim': 256, 'fixed_weight_margin': 1.0, 'global_sample_rate': 0.1}
 
-# skip_best_hyperparams
-if not args.skip_best_hyperparams:
-    best_params = get_best_hyperparams(args.dataset)
-    args.embedding_dim = best_params['embedding_dim']
-    args.fixed_weight_margin = best_params['fixed_weight_margin']
-    args.global_sample_rate = best_params['global_sample_rate']
+def apply_dataset_runtime_config(args, dataset):
+    """Apply dataset-specific defaults immediately before running a dataset."""
+    args.dataset = canonical_dataset_name(dataset)
 
-# ====================  ====================
+    if not args.skip_best_hyperparams:
+        best_params = get_best_hyperparams(args.dataset)
+        args.embedding_dim = best_params['embedding_dim']
+        args.fixed_weight_margin = best_params['fixed_weight_margin']
+        args.global_sample_rate = best_params['global_sample_rate']
 
-if args.lr is None:
-    if args.dataset in ['Amazon']:
-        args.lr = 1e-3  # 0.001
-    elif args.dataset in ['t_finance']:
+    if args.lr is None:
         args.lr = 1e-3
-    elif args.dataset in ['reddit']:
-        args.lr = 1e-3
-    elif args.dataset in ['photo']:
-        args.lr = 1e-3
-    elif args.dataset in ['elliptic']:
-        args.lr = 1e-3
-    elif args.dataset in ['Flickr']:
-        args.lr = 1e-3  # Flickr
+
+    if args.dataset in ['photo']:
+        args.mean = 0.02
+        args.var = 0.01
     else:
-        args.lr = 1e-3  #
+        args.mean = 0.0
+        args.var = 0.0
 
-
-if args.dataset in [ 'photo']:
-    args.mean = 0.02    #
-    args.var = 0.01     #  -
-else:
-    args.mean = 0.0     #
-    args.var = 0.0
-
-print('Dataset: ', args.dataset)  #
-print('Best Hyperparameters:')
-print(f'  Embedding Dim: {args.embedding_dim}')
-print(f'  Fixed Weight Margin: {args.fixed_weight_margin}')
-print(f'  Global Sample Rate: {args.global_sample_rate}')
+    print('Dataset: ', args.dataset)
+    print('Best Hyperparameters:')
+    print(f'  Embedding Dim: {args.embedding_dim}')
+    print(f'  Fixed Weight Margin: {args.fixed_weight_margin}')
+    print(f'  Global Sample Rate: {args.global_sample_rate}')
 
 def plot_and_save(x_values, y_values, x_label, title, filename):
     plt.figure(figsize=(6, 4))
@@ -390,6 +381,7 @@ def _append_result_to_csv_file(summary_data, csv_file):
         'best_auc_epoch': 'AUC',
         'top_3_auc': 'AUC',
         'early_stop_epoch': '',
+        'selection_policy': '',
         'total_time': '',
         'avg_epoch_time': '',
         'num_epoch': '',
@@ -1137,6 +1129,7 @@ def run_experiment(args, seed):
             'best_auc_epoch': -1,
             'top_3_auc': [],
             'early_stop_epoch': -1,
+            'selection_policy': 'prior_only_final_report',
             'total_time': 0.0,
             'avg_epoch_time': 0.0,
             'num_epoch': 0,
@@ -1439,6 +1432,11 @@ def run_experiment(args, seed):
         final_score_source = 'model'
         final_fusion_weight = active_fusion_weight
         patience = args.patience
+        use_test_metric_selection = bool(getattr(args, 'allow_test_metric_selection', False))
+        if use_test_metric_selection:
+            print('[Selection] legacy mode enabled: test AUC selects the best epoch and can trigger early stopping.')
+        else:
+            print('[Selection] fixed-final-epoch mode: test labels are used only for final reporting.')
 
         #   - epoch
         for epoch in range(args.num_epoch):
@@ -1662,6 +1660,14 @@ def run_experiment(args, seed):
 
             # ====================  ====================
 
+            should_evaluate_test = use_test_metric_selection or epoch == args.num_epoch - 1
+            if not should_evaluate_test:
+                if epoch % 10 == 0:
+                    print("[%04d/%04d] margin: %.5f | bce: %.5f | rec: %.5f | total: %.5f | test metrics deferred to final epoch" % (
+                        epoch, args.num_epoch, loss_margin.item(), loss_bce.item(), loss_rec.item(), loss.item()))
+                pbar.update(1)
+                continue
+
             #  epoch
             model.eval()  #  dropout
             train_flag = False  #
@@ -1718,10 +1724,13 @@ def run_experiment(args, seed):
             final_fusion_weight = selected_val_metrics.get('fusion_weight', active_fusion_weight)
 
 
-            if run_mode == 'model_only':
-                improved = auc > best_auc
+            if use_test_metric_selection:
+                if run_mode == 'model_only':
+                    improved = auc > best_auc
+                else:
+                    improved = auc > best_auc or (abs(auc - best_auc) < 1e-12 and AP > best_ap)
             else:
-                improved = auc > best_auc or (abs(auc - best_auc) < 1e-12 and AP > best_ap)
+                improved = True
 
             if improved:
                 best_auc = auc
@@ -1733,11 +1742,12 @@ def run_experiment(args, seed):
 
             #  AUCAUC10epoch
             if epoch % 10 == 0 or epoch == args.num_epoch - 1:
-                print("[%04d/%04d] margin: %.5f | bce: %.5f | rec: %.5f | total: %.5f | test_auc: %.4f | test_ap: %.4f | precision@k: %.4f | best_auc: %.4f | score: %s" % (
+                selection_label = 'best_auc' if use_test_metric_selection else 'final_auc'
+                print("[%04d/%04d] margin: %.5f | bce: %.5f | rec: %.5f | total: %.5f | test_auc: %.4f | test_ap: %.4f | precision@k: %.4f | %s: %.4f | score: %s" % (
                     epoch, args.num_epoch, loss_margin.item(), loss_bce.item(), loss_rec.item(), loss.item(),
-                    auc, AP, precision_at_k, best_auc, selected_score_name[:80]))
+                    auc, AP, precision_at_k, selection_label, best_auc, selected_score_name[:80]))
 
-            if epoch - best_epoch >= patience:
+            if use_test_metric_selection and epoch - best_epoch >= patience:
                 print(f"\n[Early stop] no improvement for {patience} epochs over best AUC {best_auc:.4f},stopped at epoch {epoch}")
                 early_stop_triggered = True
                 pbar.update(1)
@@ -1745,17 +1755,21 @@ def run_experiment(args, seed):
             pbar.update(1)
 
 
-    final_auc = best_auc
-    final_ap = best_ap
-    final_precision_k = best_precision_k
-    final_epoch = best_epoch
-    final_score_source = best_score_source
-    final_fusion_weight = best_fusion_weight
+    selection_policy = 'legacy_test_auc_best_epoch' if use_test_metric_selection else 'fixed_final_epoch'
+    if use_test_metric_selection:
+        final_auc = best_auc
+        final_ap = best_ap
+        final_precision_k = best_precision_k
+        final_epoch = best_epoch
+        final_score_source = best_score_source
+        final_fusion_weight = best_fusion_weight
 
 
     print("\n=====================================================================")
     if early_stop_triggered:
         print(f'[Early stop] best epoch={final_epoch}, patience={patience}')
+    elif not use_test_metric_selection:
+        print('[Selection] no test-metric early stopping; reporting final epoch only')
     print(f'[Final] Epoch: {final_epoch}/{args.num_epoch}')
     print(f'[Final] Test AUC: {final_auc:.4f}')
     print(f'[Final] Test AP: {final_ap:.4f}')
@@ -1789,6 +1803,10 @@ def run_experiment(args, seed):
     if args.lr is not None:
         run_command += f" --lr {args.lr}"
     run_command += f" --seed {seed}"
+    if args.strict_3_7:
+        run_command += " --strict_3_7"
+    if getattr(args, 'allow_test_metric_selection', False):
+        run_command += " --allow_test_metric_selection"
 
     #  - .py
     algorithm_name = ALGORITHM_NAME
@@ -1798,9 +1816,9 @@ def run_experiment(args, seed):
     if len(auc_history) > 0:
         top_3_auc = [(record['epoch'], round(record['auc'], 5), round(record['ap'], 5), record.get('score_source', 'model')) for record in auc_history[-3:]]
 
-    early_stop_epoch = final_epoch
+    early_stop_epoch = final_epoch if early_stop_triggered else -1
 
-    avg_epoch_time = round(total_time / (epoch + 1), 5) if epoch > 0 else 0
+    avg_epoch_time = round(total_time / (epoch + 1), 5) if args.num_epoch > 0 else 0
 
 
     ablation_flags = []
@@ -1832,6 +1850,7 @@ def run_experiment(args, seed):
         'best_auc_epoch': final_epoch,
         'top_3_auc': top_3_auc,
         'early_stop_epoch': early_stop_epoch,
+        'selection_policy': selection_policy,
         'total_time': round(total_time, 5),
         'avg_epoch_time': avg_epoch_time,
         'num_epoch': args.num_epoch,
@@ -2000,7 +2019,7 @@ if __name__ == '__main__':
             print(f'# [{dataset_idx}/{len(datasets_to_use)}] Dataset: {dataset} (seed={seed})')
             print(f"{'#'*70}")
 
-            args.dataset = dataset
+            apply_dataset_runtime_config(args, dataset)
 
             try:
                 seed_results = run_one_or_three_ablation(args, seed)

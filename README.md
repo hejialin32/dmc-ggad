@@ -185,7 +185,7 @@ pip install numpy scipy scikit-learn matplotlib networkx
 
 ## Reproducing Experiments
 
-All experiments use a fixed set of random seeds (`[3, 123, 2026]`) and report mean ± standard deviation over three independent runs. The training protocol follows strict semi-supervised constraints: models access only labeled normal nodes during training; validation and test sets remain unseen.
+The strict protocol uses the paper seed set (`[0, 1, 3, 5, 42, 123, 456, 789, 3407, 2026]`) and reports mean +/- standard deviation over 10 independent runs. Models access only labeled normal nodes during training. By default, validation/test labels are not used for hyperparameter tuning, early stopping, score fusion, or epoch selection; test labels are evaluated only at the final epoch for reporting.
 
 ### Step 1: Data Preparation
 
@@ -207,6 +207,8 @@ dmc-ggad/datasets/
 
 No additional preprocessing is required—the loader handles feature normalization, adjacency normalization (symmetric $D^{-1/2}AD^{-1/2}$), and self-loop addition automatically.
 
+Current repository note: the public dataset folder may not include `dblp.mat`. Add the DBLP file before claiming a full 10-dataset reproduction; otherwise DBLP will fail and only the available datasets can be verified.
+
 ### Step 2: Running DMC-GGAD
 
 #### Single Dataset, Single Seed
@@ -216,19 +218,19 @@ cd dmc-ggad/dmc-ggad
 python run.py --dataset cora --seed 123
 ```
 
-#### All 10 Datasets, All 3 Seeds (Full Reproduction)
+#### Available Datasets, All 10 Paper Seeds
 
 ```bash
 cd dmc-ggad/dmc-ggad
-python run.py
+python run.py --strict_3_7
 ```
 
-This runs all `DEFAULT_DATASETS` with all `DEFAULT_SEEDS` and saves results to `dmcggad_results.csv`.
+This runs all datasets listed in `DATASET_LIST` with all seeds in `SEED_LIST` and saves rows to `dmc-ggad/results.csv` by default.
 
 #### Custom Configurations
 
 ```bash
-python run.py --dataset facebook --seed 3 --device cpu --num_epoch 500 --patience 100
+python run.py --dataset facebook --seed 3 --device cpu --num_epoch 500 --strict_3_7
 ```
 
 ### Step 3: Running Baselines
@@ -275,21 +277,21 @@ DMC-GGAD uses dataset-specific hyperparameters pre-configured in `BEST_PARAMS` (
 | `num_layers` | 3 | GCN encoder depth |
 | `lr` | 1e-3 | Adam learning rate |
 | `weight_decay` | 0.0 | L2 regularization coefficient |
-| `num_epoch` | 300 | Maximum training epochs |
-| `patience` | 100 | Early stopping patience |
+| `num_epoch` | 200 | Fixed training epochs used by the default script |
+| `patience` | 100 | Legacy-only early stopping patience when `--allow_test_metric_selection` is explicitly enabled |
 | `train_rate` | 0.25 | Proportion of normal nodes used as labeled anchors |
 | $\lambda_2$ (BCE) | 1.0 | Binary cross-entropy loss weight |
 | $\lambda_{scale}$ (REC) | 5.0 | Reconstruction push-pull loss weight |
 | `density_threshold` ($\tau$) | 1.0 | Density partition threshold |
 | `hop` | 2 | Multi-hop neighborhood range for candidate pool |
 
-**Hyperparameter tuning protocol**: $\lambda_1$ (margin loss weight) was tuned over $\{0.5, 1.0, 2.0, 3.0, 4.0\}$ based on validation AUROC. Other hyperparameters were selected via validation AUROC in a controlled-variable fashion. Test set was used only for final reporting.
+**Hyperparameter protocol**: The checked-in script uses fixed dataset-specific hyperparameters from `run.py`. Under the strict protocol, validation and test labels are not used for hyperparameter tuning, early stopping, score fusion, or epoch selection. The legacy behavior that selects the best epoch by test AUC is available only through `--allow_test_metric_selection` for backward compatibility and should not be used for strict paper-style reporting.
 
 ### Step 5: Evaluation Metrics
 
 We evaluate all methods using two standard metrics:
 
-- **AUROC** (Area Under the Receiver Operating Characteristic Curve): Primary metric for model selection. Measures ranking quality across all threshold levels.
+- **AUROC** (Area Under the Receiver Operating Characteristic Curve): Primary reporting metric. Measures ranking quality across all threshold levels.
 - **AP** (Average Precision): Measures the quality of top-ranked predictions, particularly sensitive to early-precision performance.
 
 Both metrics are computed using `sklearn.metrics.roc_auc_score` and `sklearn.metrics.average_precision_score`. The implementation is in the `evaluate()` function of `run.py`.
@@ -302,19 +304,21 @@ To reproduce the complete set of experiments reported in the paper:
 
 ```bash
 cd dmc-ggad/dmc-ggad
-python run.py --output_csv dmcggad_results.csv
+python run.py --strict_3_7
 ```
 
 **2. Ablation study:**
 
-Manually disable each mechanism by modifying the `model.py` generator or `run.py` training logic:
+Use CLI flags instead of manually editing training code:
 
 | Variant | Modification |
 |:--|:--|
-| `w/o Density` | Force all nodes to use the low-density random mixing branch in `DensityAwareStructuralGenerator.forward()` |
-| `w/o REC+Density` | Disable both density branching and set `loss_rec = 0` |
-| `w/o REC+TAF-QA` | Set `loss_rec = 0` and fix fusion weight $\alpha = 1.0$ (neural scores only) |
-| `w/o Density+REC+TAF-QA` | All three disabled: uniform generation, no REC loss, neural-only scores |
+| `w/o Density` | `--disable_density` |
+| `w/o REC` | `--disable_rec` |
+| `w/o TAF-QA` | `--disable_taf_qa` |
+| `Model-only` | `--disable_graph_prior` |
+| `Prior-only` | `--prior_only` |
+| Three-way quick ablation | `--three_ablation` |
 
 **3. Sensitivity analysis:**
 
@@ -338,7 +342,9 @@ Three perturbation types are applied to test robustness:
 
 ### Main Results (AUROC)
 
-The following table reproduces the AUROC results from the paper. Values are mean ± standard deviation over seeds `[3, 123, 2026]`. **Bold** indicates best, underline indicates second-best.
+Note: the DMC-GGAD row below uses the 10-seed values from the paper PDF. Regenerate this table from the corrected script before using it as a submission artifact.
+
+The following table is a paper-result snapshot. Values should be regenerated with the fixed strict protocol before submission.
 
 | Method | ACM | Citeseer | Cora | DBLP | Facebook | Flickr | Photo | Pubmed | Weibo | Tolokers |
 |:--|:--|:--|:--|:--|:--|:--|:--|:--|:--|:--|
@@ -351,7 +357,7 @@ The following table reproduces the AUROC results from the paper. Values are mean
 | GGAD | 0.3751 | 0.5859 | 0.4838 | 0.5138 | 0.7626 | 0.4481 | 0.6325 | 0.3293 | 0.1184 | 0.4459 |
 | CoLA | 0.6051 | 0.7640 | 0.6899 | 0.3608 | 0.7811 | 0.5771 | 0.6153 | 0.6503 | 0.2854 | 0.5519 |
 | RHO | 0.3411 | 0.4449 | 0.3096 | 0.3410 | 0.5177 | 0.6076 | 0.7149 | 0.2874 | – | 0.5110 |
-| **DMC-GGAD** | 0.8573 | **0.9299** | **0.9156** | **0.8994** | **0.9218** | **0.7878** | **0.9326** | **0.8825** | 0.9011 | **0.6750** |
+| **DMC-GGAD** | 0.8409 | 0.8348 | 0.7989 | 0.8271 | 0.8898 | 0.7820 | 0.8448 | 0.8753 | 0.8691 | 0.6889 |
 
 ### Ablation Study Summary
 
