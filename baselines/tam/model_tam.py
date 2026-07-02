@@ -8,7 +8,7 @@
 
 import torch.nn as nn
 import torch.nn.functional as F
-from utils.utils_tam import *
+from utils_tam import *
 from torch.nn.modules.module import Module
 
 

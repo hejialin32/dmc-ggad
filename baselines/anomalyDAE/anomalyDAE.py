@@ -6,7 +6,7 @@ import sys
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from model_AnomalyDAE_优化版 import Model
+from model_AnomalyDAE import Model
 from utils.utils import *
 
 from sklearn.metrics import roc_auc_score

@@ -9,8 +9,8 @@ import torch
 # 添加项目根目录到Python路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models.model_tam import Model
-from utils.utils_tam import *
+from model_tam import Model
+from utils_tam import *
 from sklearn.metrics import precision_recall_curve, average_precision_score
 from sklearn.metrics import roc_auc_score
 import argparse
