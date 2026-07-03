@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+results/
+*_results.csv
+*_summary.csv
+*.manifest.json
+*.log
+*.out
+
+baselines/**/distance_save/

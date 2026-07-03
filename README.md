@@ -253,6 +253,47 @@ python run.py --dataset cora --seed 123
 
 **Note**: Some baselines (e.g., AnomalyDAE, TAM) may encounter memory issues on edge-dense datasets such as Flickr and Tolokers. DMC-GGAD's sparse message-passing design ensures it completes on all 10 datasets.
 
+#### Strong Classical NA Baselines
+
+For higher-standard comparisons, the repository includes a strict runner for
+classical neighborhood-aggregation baselines:
+
+- `XGBoost+NA`
+- `RandomForest+NA`
+- `ExtraTrees+NA`
+- `MLP+NA`
+
+These baselines use the same strict label-visibility protocol as DMC-GGAD:
+25% of normal nodes are labeled for training, all real anomaly labels are held
+out until final reporting, and no validation/test labels are used for model
+selection. Since these are binary classifiers, the runner trains them with
+normal training nodes plus pseudo-negative samples generated from the normal
+training distribution only. Results record this explicitly as
+`label_visibility=normal_only_pseudo_negative`.
+
+```bash
+# Smoke test on one dataset and one seed
+python baselines/strong_na/run_strong_na.py \
+  --datasets cora \
+  --seeds 123 \
+  --methods rf_na,extratrees_na,mlp_na \
+  --output_csv baselines/strong_na/strong_na_results.csv
+
+# Full strict run on the configured datasets and paper seed set
+python baselines/strong_na/run_strong_na.py \
+  --methods xgboost_na,rf_na,extratrees_na,mlp_na \
+  --skip_completed
+
+# Summarize mean +/- std across seeds
+python baselines/strong_na/summarize_strong_na.py \
+  --input_csv baselines/strong_na/strong_na_results.csv \
+  --output_csv baselines/strong_na/strong_na_summary.csv
+```
+
+`xgboost_na` requires the optional `xgboost` package. If it is unavailable, the
+runner records the failure for that method without stopping the remaining
+baselines.
+
 ### Step 4: Hyperparameter Configuration
 
 DMC-GGAD uses dataset-specific hyperparameters pre-configured in `BEST_PARAMS` (see `run.py`). The following table lists the optimal configuration for each dataset:
