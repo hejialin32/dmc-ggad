@@ -1,0 +1,5 @@
+method,dataset,server_gpu,run_type,status,seconds,error_summary,next_action
+Flex-GAD,elliptic,48GB,10 seeds original config,failed,,CUDA OOM after allocating nearly all 47.5 GiB GPU memory,Rerun on 80GB GPU
+Flex-GAD,amazon,48GB,1 epoch smoke original config,failed,50.410600,CUDA OOM trying to allocate 8.45 GiB with only 8.28 GiB free,Rerun on 80GB GPU
+Flex-GAD,yelp,48GB,1 epoch smoke original config,failed,40.782158,CUDA OOM trying to allocate 7.43 GiB with only 1.76 GiB free,Rerun on 80GB GPU
+Flex-GAD,tfinance,48GB,1 epoch smoke original config,failed,304.489148,CUDA OOM trying to allocate 20.26 GiB with only 3.34 GiB free,Rerun on 80GB GPU

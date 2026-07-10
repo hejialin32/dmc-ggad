@@ -1,0 +1,11 @@
+method,dataset,seed,status,auc,ap,best_cutting,seconds,notes
+TAM,facebook,123,done,0.8851515152,0.2124286138,0,85.78,legacy run
+TAM,cora,123,done,0.8412600990,0.2516727495,7,304.08,legacy run
+TAM,photo,123,done,0.6047733280,0.1078307571,0,3327.48,legacy run
+TAM,acm,123,done,0.8918340681,0.3852828603,4,7988.56,48GB rerun
+TAM,flickr,123,done,0.6675772834,0.1119874318,7,1987.75,48GB rerun
+TAM,tolokers,123,done,0.5179693372,0.1868406943,6,3803.50,48GB rerun
+TAM,weibo,123,done,0.7170591008,0.1650423581,6,1958.87,48GB rerun
+TAM,pubmed,123,done,0.8781530135,0.2352380915,7,10646.37,48GB rerun
+TAM,blogcatalog,123,done,0.8960048011,0.2952952209,7,820.45,48GB rerun
+TAM,citeseer,123,done,0.7398142902,0.1173160451,4,323.18,rerun with normalize_score NaN guard

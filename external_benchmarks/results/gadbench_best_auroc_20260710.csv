@@ -1,0 +1,9 @@
+dataset,best_model,auc_mean,notes
+amazon,XGBGraph,0.98123,GADBench representative CPU/GNN run completed
+elliptic,XGBoost,0.99607,GADBench representative CPU/GNN run completed
+questions,GCN,0.75549,GADBench representative CPU/GNN run completed
+reddit,BWGNN,0.66509,GADBench representative CPU/GNN run completed
+tfinance,XGBGraph,0.96738,GADBench representative CPU/GNN run completed
+tolokers,RFGraph,0.80791,GADBench representative CPU/GNN run completed
+weibo,XGBGraph,0.99365,GADBench representative CPU/GNN run completed
+yelp,XGBGraph,0.96087,GADBench representative CPU/GNN run completed

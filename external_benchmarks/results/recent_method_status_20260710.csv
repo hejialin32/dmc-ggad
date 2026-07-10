@@ -1,0 +1,7 @@
+method,year,status,covered_datasets,next_action
+RHO,2025,partial,"amazon,photo,reddit,tolokers,tfinance,questions(partial)",Complete representative datasets and seeds on the 80GB server
+Flex-GAD,2025,partial,"reddit,tolokers,weibo,questions completed; elliptic,amazon,yelp,tfinance OOM on 48GB",Rerun OOM datasets on the 80GB server
+UniGAD,2024,cloned_not_aligned,weibo-els official example only,Adapt node-level GADBench protocol before inclusion
+GraphNC,2025,no_official_code_confirmed,,Use only if official code appears or a separate reimplementation window is approved
+CAGAD,2024,no_official_code_confirmed,,Use only if official code appears or a separate reimplementation window is approved
+GAD-NR,2023,partial,"amazon,elliptic,questions,reddit,tolokers,weibo,yelp",Treat as useful but not a recent-two-year method; retry T-Finance only if time allows

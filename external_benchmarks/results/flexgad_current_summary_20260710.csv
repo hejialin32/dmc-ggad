@@ -1,0 +1,9 @@
+method,dataset,n,status,auc_mean,auprc_mean,precision_k_mean,seconds_mean,notes
+Flex-GAD,reddit,10,done,0.490791,0.035168,0.036054,37.080629,48GB run completed with final-epoch metrics
+Flex-GAD,tolokers,10,done,0.451605,0.195835,0.157944,45.545678,48GB run completed with final-epoch metrics
+Flex-GAD,weibo,10,done,0.733380,0.348030,0.367435,34.452988,48GB run completed with final-epoch metrics
+Flex-GAD,questions,10,done,0.503324,0.030339,,161.997412,48GB run completed with final-epoch metrics
+Flex-GAD,elliptic,10,failed,,,,,CUDA OOM on 48GB GPU at original dimension 128
+Flex-GAD,amazon,1,failed,,,,50.410600,1-epoch smoke failed with CUDA OOM on 48GB GPU
+Flex-GAD,yelp,1,failed,,,,40.782158,1-epoch smoke failed with CUDA OOM on 48GB GPU
+Flex-GAD,tfinance,1,failed,,,,304.489148,1-epoch smoke failed with CUDA OOM on 48GB GPU
